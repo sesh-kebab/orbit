@@ -1,0 +1,9 @@
+node_modules/
+out/
+dist/
+build/
+.DS_Store
+*.log
+
+# Debug frame dumps from the asset capture harness (CAPTURE_DUMP_FRAMES).
+.capture-frames/

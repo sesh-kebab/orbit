@@ -1,0 +1,1250 @@
+:root {
+    --ink: #f2f0f8;
+    --muted: rgba(238, 236, 248, 0.58);
+    --dim: rgba(238, 236, 248, 0.36);
+    /* Alpha values are overwritten at runtime from settings.panelOpacity. */
+    --panel-alpha: 0.88;
+    --panel-alpha-strong: 0.96;
+    --panel-alpha-pill: 0.78;
+    --glass: rgba(30, 28, 44, var(--panel-alpha));
+    --glass-strong: rgba(24, 22, 36, var(--panel-alpha-strong));
+    --glass-pill: rgba(12, 10, 20, var(--panel-alpha-pill));
+    --line: rgba(255, 255, 255, 0.12);
+    --line-bright: rgba(255, 255, 255, 0.3);
+    --danger: #ff7585;
+    --ok: #63d69a;
+    --radius: 22px;
+    /*
+     * Both are overwritten at runtime from settings.chatFontFamily /
+     * settings.chatFontSize. Every font-size in this file is expressed as
+     * `calc(var(--chat-font-scale) * Npx)`, where N is the size at the default
+     * 13px base — so one number rescales the whole panel without any rule
+     * compounding against another.
+     */
+    --chat-font-family:
+        ui-rounded, "SF Pro Rounded", -apple-system, "Segoe UI Variable", "Segoe UI", Inter,
+        system-ui, sans-serif;
+    --chat-font-scale: 1;
+    font-family: var(--chat-font-family);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html,
+body,
+#root {
+    height: 100%;
+    width: 100%;
+    background: transparent;
+    overflow: hidden;
+    color: var(--ink);
+    /*
+     * `antialiased` forces grayscale antialiasing with thinned stems, which on
+     * a non-Retina widescreen monitor reads as blurry. Asking for subpixel
+     * antialiasing lets the compositor use LCD text where it can, and falls
+     * back to grayscale where it cannot.
+     */
+    -webkit-font-smoothing: subpixel-antialiased;
+    text-rendering: optimizeLegibility;
+    user-select: none;
+    cursor: default;
+}
+
+.root {
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    padding: 0 12px 6px 12px;
+}
+
+.stack {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: flex-end;
+    gap: 10px;
+    /* Fluid: the panel grows into whatever the resized window gives it. */
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+}
+
+/* ---------- buddy ---------- */
+
+.buddy-zone {
+    position: relative;
+    cursor: grab;
+    flex: 0 0 auto;
+}
+.buddy-zone:active {
+    cursor: grabbing;
+}
+
+.buddy {
+    position: relative;
+}
+
+.buddy-svg,
+.buddy-fx {
+    position: absolute;
+    inset: 0;
+    width: 230px;
+    height: 230px;
+    pointer-events: none;
+}
+
+.buddy-svg {
+    overflow: visible;
+}
+
+.buddy-badge {
+    position: absolute;
+    top: 8px;
+    right: 6px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: var(--danger);
+    color: #fff;
+    font-size: calc(var(--chat-font-scale) * 11px);
+    font-weight: 800;
+    display: grid;
+    place-items: center;
+    box-shadow: 0 0 14px rgba(255, 117, 133, 0.8);
+}
+
+/* ---------- shared surfaces ---------- */
+
+.speech,
+.shelf-pill,
+.shelf-more {
+    backdrop-filter: blur(24px) saturate(150%);
+    -webkit-backdrop-filter: blur(24px) saturate(150%);
+}
+
+.panel {
+    /* Fills the window rather than a fixed box, so the user's resize is
+       what actually decides how much transcript is visible. */
+    position: relative;
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+}
+
+/*
+ * The frosted backing lives on a pseudo-element rather than on `.panel`
+ * itself. A `backdrop-filter` promotes its element to a composited layer, and
+ * text rasterised into such a layer loses subpixel antialiasing and picks up
+ * resampling softness on fractionally-scaled displays. Pushing the blur behind
+ * the content (negative z-index, clipped by the panel's `overflow: hidden`)
+ * keeps the glass look while the transcript is drawn straight onto the window.
+ */
+.panel::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: var(--glass);
+    backdrop-filter: blur(24px) saturate(150%);
+    -webkit-backdrop-filter: blur(24px) saturate(150%);
+    pointer-events: none;
+}
+
+/*
+ * The window is frameless and transparent, so its native resize edges are
+ * unreachable. This grip is the affordance: drag it to size the panel, with
+ * the bottom-right corner (and therefore the buddy) staying put.
+ */
+.resize-grip {
+    position: absolute;
+    /* Inset clear of the panel's rounded corner. `.panel` clips with
+       `overflow: hidden` and a 22px radius, and clipped-away pixels are not
+       hit-testable, so a grip pinned to 0,0 would ignore clicks aimed at its
+       own corner. Starting at 6,6 keeps the whole box inside the rounding. */
+    top: 6px;
+    left: 6px;
+    width: 26px;
+    height: 26px;
+    cursor: nwse-resize;
+    /* Above `.panel-head`, which spans the same corner. */
+    z-index: 5;
+    /* Pointer events must not be reinterpreted as a scroll/zoom gesture. */
+    touch-action: none;
+    opacity: 0;
+    transition: opacity 120ms ease;
+}
+.panel:hover .resize-grip,
+.resize-grip[data-dragging] {
+    opacity: 1;
+}
+.resize-grip::before {
+    content: "";
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 9px;
+    height: 9px;
+    border-top: 2px solid var(--line-bright);
+    border-left: 2px solid var(--line-bright);
+    border-radius: 3px 0 0 0;
+}
+
+.panel-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 12px;
+    border-bottom: 1px solid var(--line);
+}
+
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    box-shadow: 0 0 10px currentColor;
+    flex: none;
+}
+
+.panel-title {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+}
+.panel-title strong {
+    font-size: calc(var(--chat-font-scale) * 14px);
+}
+.panel-title .muted {
+    font-size: calc(var(--chat-font-scale) * 11px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.muted {
+    color: var(--muted);
+}
+.small {
+    font-size: calc(var(--chat-font-scale) * 11px);
+}
+
+.mood-chip {
+    font-size: calc(var(--chat-font-scale) * 10px);
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+.icon-button {
+    all: unset;
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--ink);
+    font-size: calc(var(--chat-font-scale) * 11px);
+    cursor: pointer;
+    position: relative;
+    flex: none;
+}
+.icon-button:hover {
+    background: rgba(255, 255, 255, 0.18);
+}
+.icon-button:disabled {
+    opacity: 0.25;
+    cursor: default;
+}
+.icon-button.on {
+    background: rgba(255, 255, 255, 0.22);
+}
+.icon-button.tiny {
+    width: 18px;
+    height: 18px;
+    font-size: calc(var(--chat-font-scale) * 9px);
+}
+.icon-button .count {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    background: #ff9f45;
+    color: #241a08;
+    font-size: calc(var(--chat-font-scale) * 9px);
+    font-weight: 800;
+    font-style: normal;
+    border-radius: 8px;
+    padding: 1px 4px;
+}
+
+/* ---------- transcript ---------- */
+
+.transcript {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 12px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+    user-select: text;
+}
+
+.bubble {
+    max-width: 86%;
+    padding: 8px 11px;
+    border-radius: 15px;
+    font-size: calc(var(--chat-font-scale) * 13px);
+    line-height: 1.42;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.bubble-orbit,
+.bubble-system {
+    align-self: flex-start;
+    background: rgba(255, 255, 255, 0.09);
+}
+.bubble-user {
+    align-self: flex-end;
+    background: linear-gradient(135deg, #6f83ff, #a06bff);
+    color: #fff;
+}
+
+.caret {
+    display: inline-block;
+    width: 6px;
+    height: 12px;
+    margin-left: 2px;
+    vertical-align: -1px;
+    background: currentColor;
+    opacity: 0.7;
+    animation: blink 1s steps(2) infinite;
+}
+@keyframes blink {
+    50% {
+        opacity: 0;
+    }
+}
+
+.typing {
+    display: flex;
+    gap: 4px;
+    padding: 9px 12px;
+    align-self: flex-start;
+    background: rgba(255, 255, 255, 0.09);
+    border-radius: 14px;
+}
+.typing i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    animation: hop 1.1s infinite ease-in-out;
+}
+.typing i:nth-child(2) {
+    animation-delay: 0.15s;
+}
+.typing i:nth-child(3) {
+    animation-delay: 0.3s;
+}
+@keyframes hop {
+    0%,
+    60%,
+    100% {
+        transform: translateY(0);
+        opacity: 0.5;
+    }
+    30% {
+        transform: translateY(-4px);
+        opacity: 1;
+    }
+}
+
+/* ---------- cards ---------- */
+
+.card {
+    border-radius: 15px;
+    padding: 10px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.05);
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    font-size: calc(var(--chat-font-scale) * 13px);
+    line-height: 1.4;
+}
+.card p {
+    overflow-wrap: anywhere;
+}
+.card-title {
+    font-size: calc(var(--chat-font-scale) * 10px);
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+.card-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+.card-done {
+    background: rgba(99, 214, 154, 0.1);
+    border-color: rgba(99, 214, 154, 0.32);
+}
+.card-error {
+    background: rgba(255, 117, 133, 0.12);
+    border-color: rgba(255, 117, 133, 0.36);
+}
+.card-ask {
+    background: rgba(255, 117, 133, 0.13);
+    border-color: rgba(255, 117, 133, 0.45);
+}
+.card-resolved {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    opacity: 0.65;
+}
+.tick {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: calc(var(--chat-font-scale) * 11px);
+    font-weight: 800;
+    background: rgba(99, 214, 154, 0.22);
+    color: var(--ok);
+    flex: none;
+}
+.card-error .tick {
+    background: rgba(255, 117, 133, 0.22);
+    color: var(--danger);
+}
+.ask-flag {
+    margin-left: auto;
+    font-size: calc(var(--chat-font-scale) * 10px);
+    font-weight: 800;
+    color: var(--danger);
+}
+.ask-question {
+    font-size: calc(var(--chat-font-scale) * 13px);
+}
+.ask-subject {
+    display: block;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: calc(var(--chat-font-scale) * 11px);
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 8px;
+    padding: 6px 8px;
+    overflow-wrap: anywhere;
+    max-height: 84px;
+    overflow: auto;
+    user-select: text;
+}
+.ask-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.ask-freeform input {
+    all: unset;
+    width: 100%;
+    font-size: calc(var(--chat-font-scale) * 12px);
+    padding: 6px 9px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.28);
+    border: 1px solid var(--line);
+}
+
+.chip {
+    all: unset;
+    font-size: calc(var(--chat-font-scale) * 12px);
+    font-weight: 600;
+    padding: 5px 11px;
+    border-radius: 999px;
+    cursor: pointer;
+    border: 1px solid var(--line-bright);
+    background: rgba(255, 255, 255, 0.08);
+}
+.chip:hover {
+    background: rgba(255, 255, 255, 0.16);
+}
+.chip-primary {
+    background: rgba(120, 220, 170, 0.2);
+    border-color: rgba(120, 220, 170, 0.5);
+}
+.chip-danger {
+    background: rgba(255, 117, 133, 0.18);
+    border-color: rgba(255, 117, 133, 0.5);
+}
+
+/* ---------- agents ---------- */
+
+.deck {
+    border-bottom: 1px solid var(--line);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+.deck-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.deck-actions {
+    display: flex;
+    gap: 10px;
+}
+.link {
+    all: unset;
+    font-size: calc(var(--chat-font-scale) * 10px);
+    color: var(--muted);
+    cursor: pointer;
+}
+.link:hover {
+    color: var(--ink);
+}
+.deck-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 160px;
+    overflow-y: auto;
+}
+/* A flex column with a max-height shrinks its children to fit rather than
+   scrolling, which squashes rows until their second line is sliced in half.
+   The list is meant to overflow. */
+.deck-list > * {
+    flex: none;
+}
+
+.agent-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 6px 8px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--line);
+}
+.agent-row.blocked {
+    background: rgba(255, 117, 133, 0.14);
+    border-color: rgba(255, 117, 133, 0.45);
+}
+.agent-dot {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    display: grid;
+    place-items: center;
+    font-size: calc(var(--chat-font-scale) * 9px);
+    font-weight: 800;
+    flex: none;
+}
+.agent-dot.small {
+    width: 14px;
+    height: 14px;
+    border-width: 2px;
+}
+.agent-dot.spinning {
+    border-top-color: transparent;
+    border-right-color: transparent;
+    animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.agent-main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+}
+.agent-title {
+    font-size: calc(var(--chat-font-scale) * 12px);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.agent-step {
+    font-size: calc(var(--chat-font-scale) * 11px);
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.agent-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    font-size: calc(var(--chat-font-scale) * 10px);
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+    flex: none;
+}
+.agent-meta em {
+    font-style: normal;
+}
+
+/* ---------- ambient shelf + speech ---------- */
+
+.shelf {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 5px;
+    max-width: 300px;
+}
+.shelf-pill,
+.shelf-more {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    background: var(--glass-pill);
+    border: 1px solid var(--line);
+    font-size: calc(var(--chat-font-scale) * 11px);
+    max-width: 100%;
+}
+.shelf-pill.blocked {
+    border-color: rgba(255, 117, 133, 0.7);
+}
+.shelf-title {
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.shelf-step {
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+}
+.shelf-more {
+    font-weight: 700;
+    color: var(--muted);
+}
+
+.speech {
+    position: relative;
+    max-width: 300px;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 18px;
+    background: var(--glass-strong);
+    border: 1px solid var(--line);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    font-size: calc(var(--chat-font-scale) * 12px);
+    line-height: 1.4;
+    cursor: pointer;
+}
+.speech p {
+    overflow-wrap: anywhere;
+}
+.speech::after {
+    content: "";
+    position: absolute;
+    bottom: -8px;
+    right: 42px;
+    border-left: 8px solid transparent;
+    border-right: 8px solid transparent;
+    border-top: 9px solid var(--glass-strong);
+}
+
+/* ---------- composer ---------- */
+
+.quick {
+    display: flex;
+    gap: 6px;
+    padding: 0 12px 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.quick .chip {
+    white-space: nowrap;
+    font-size: calc(var(--chat-font-scale) * 11px);
+}
+
+.composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 10px 12px 12px;
+    /* The composer takes the height it needs and the transcript above gives it
+       up, rather than the panel growing and pushing the buddy off-screen. */
+    flex: none;
+}
+.composer textarea {
+    all: unset;
+    flex: 1;
+    min-width: 0;
+    /* Six lines of dictated speech before it starts scrolling. Long spoken
+       instructions arrive all at once, and a two-line window makes them
+       impossible to check. */
+    max-height: calc(var(--chat-font-scale) * 13px * 1.4 * 6 + 20px);
+    padding: 9px 12px;
+    border-radius: 14px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--line);
+    font-size: calc(var(--chat-font-scale) * 13px);
+    line-height: 1.4;
+    overflow-y: auto;
+    resize: none;
+    user-select: text;
+    white-space: pre-wrap;
+    box-sizing: border-box;
+}
+.composer textarea:focus {
+    border-color: var(--line-bright);
+}
+.send {
+    all: unset;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    color: #17131f;
+    font-size: calc(var(--chat-font-scale) * 14px);
+    font-weight: 800;
+    cursor: pointer;
+    flex: none;
+}
+.send:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+.send.stop {
+    background: rgba(255, 255, 255, 0.16);
+    color: var(--ink);
+    font-size: calc(var(--chat-font-scale) * 10px);
+}
+
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+}
+
+/* ---------- mission control ---------- */
+
+.deck {
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    /* Proportional so mission control can't crowd out the transcript in a
+       short window, but still capped in a tall one. */
+    flex: 0 1 auto;
+    max-height: min(260px, 45%);
+}
+
+.tabs {
+    display: flex;
+    gap: 2px;
+    padding: 8px 10px 0;
+}
+.tab {
+    all: unset;
+    font-size: calc(var(--chat-font-scale) * 11px);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding: 5px 9px;
+    border-radius: 9px 9px 0 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.tab:hover {
+    color: var(--ink);
+}
+.tab.on {
+    color: var(--ink);
+    background: rgba(255, 255, 255, 0.08);
+}
+.tab em {
+    font-style: normal;
+    font-size: calc(var(--chat-font-scale) * 9px);
+    background: rgba(255, 255, 255, 0.16);
+    border-radius: 7px;
+    padding: 0 4px;
+}
+
+.deck-body {
+    overflow-y: auto;
+    padding: 8px 10px;
+    flex: 1;
+    min-height: 0;
+}
+.deck-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 12px 8px;
+    border-top: 1px solid var(--line);
+}
+.pad {
+    padding: 10px 2px;
+}
+.link.center {
+    align-self: center;
+    margin-top: 2px;
+}
+.link.danger {
+    color: var(--danger);
+}
+
+.agent-block {
+    border-radius: 12px;
+    overflow: hidden;
+}
+.agent-block.off {
+    opacity: 0.5;
+}
+.agent-block > div:first-child {
+    cursor: pointer;
+}
+
+.agent-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px 10px;
+    font-size: calc(var(--chat-font-scale) * 12px);
+    background: rgba(0, 0, 0, 0.22);
+    border-radius: 0 0 12px 12px;
+    user-select: text;
+}
+.kv {
+    display: flex;
+    gap: 8px;
+    font-size: calc(var(--chat-font-scale) * 11px);
+    align-items: baseline;
+}
+.kv span {
+    color: var(--dim);
+    min-width: 44px;
+}
+.kv code,
+.agent-detail code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: calc(var(--chat-font-scale) * 11px);
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+
+.steps {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-left: 2px solid var(--line);
+    padding-left: 9px;
+}
+.step {
+    font-size: calc(var(--chat-font-scale) * 11px);
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+.step-error {
+    color: var(--danger);
+}
+.step-note {
+    color: var(--ink);
+    opacity: 0.8;
+}
+
+.result {
+    font-size: calc(var(--chat-font-scale) * 12px);
+    line-height: 1.42;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 9px;
+    padding: 7px 9px;
+    overflow-wrap: anywhere;
+}
+.result.error {
+    background: rgba(255, 117, 133, 0.14);
+}
+
+.memory-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 11px;
+    background: rgba(255, 255, 255, 0.05);
+    font-size: calc(var(--chat-font-scale) * 12px);
+}
+.memory-text {
+    flex: 1;
+    overflow-wrap: anywhere;
+}
+.tag {
+    font-size: calc(var(--chat-font-scale) * 9px);
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--dim);
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 2px 5px;
+    flex: none;
+}
+
+.log {
+    gap: 1px;
+}
+.log-row {
+    display: flex;
+    gap: 8px;
+    font-size: calc(var(--chat-font-scale) * 11px);
+    padding: 3px 4px;
+    border-radius: 7px;
+    align-items: baseline;
+}
+.log-row:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+.log-time {
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+    flex: none;
+}
+.log-kind {
+    color: var(--muted);
+    font-weight: 700;
+    flex: none;
+    min-width: 96px;
+}
+.log-kind.good {
+    color: var(--ok);
+}
+.log-kind.bad {
+    color: var(--danger);
+}
+.log-title {
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.icon-button.danger {
+    background: rgba(255, 159, 69, 0.25);
+}
+
+/* One-click replies under an Orbit bubble. */
+.choices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-self: flex-start;
+    max-width: 86%;
+    margin: -2px 0 2px 2px;
+}
+.chip-choice {
+    font-size: calc(var(--chat-font-scale) * 11px);
+    padding: 4px 10px;
+    background: rgba(111, 131, 255, 0.16);
+    border-color: rgba(140, 155, 255, 0.45);
+    transition: background 120ms ease, transform 80ms ease, opacity 120ms ease;
+}
+.chip-choice:hover:not(:disabled) {
+    background: rgba(111, 131, 255, 0.3);
+}
+.chip-choice:active:not(:disabled) {
+    transform: translateY(1px);
+    background: rgba(111, 131, 255, 0.4);
+}
+.chip-choice:focus-visible {
+    outline: 2px solid rgba(160, 175, 255, 0.9);
+    outline-offset: 2px;
+}
+.chip-choice:disabled {
+    cursor: default;
+    opacity: 0.45;
+}
+.chip-choice.picked:disabled {
+    opacity: 0.8;
+    background: rgba(111, 131, 255, 0.32);
+}
+
+/* Generated files, made openable. Sits inline in a bubble, so it has to keep
+   the line rhythm of the prose around it rather than look like a button. */
+.path-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    margin: 0 1px;
+    padding: 1px 6px;
+    border: 1px solid rgba(140, 155, 255, 0.35);
+    border-radius: 7px;
+    background: rgba(111, 131, 255, 0.14);
+    color: inherit;
+    font: inherit;
+    font-size: calc(var(--chat-font-scale) * 12px);
+    line-height: 1.3;
+    text-align: left;
+    cursor: pointer;
+    vertical-align: baseline;
+    overflow-wrap: anywhere;
+    transition: background 120ms ease, border-color 120ms ease;
+}
+.path-chip:hover {
+    background: rgba(111, 131, 255, 0.3);
+    border-color: rgba(160, 175, 255, 0.6);
+}
+.path-chip:active {
+    background: rgba(111, 131, 255, 0.42);
+}
+.path-chip:focus-visible {
+    outline: 2px solid rgba(160, 175, 255, 0.9);
+    outline-offset: 2px;
+}
+.path-chip-icon {
+    font-size: calc(var(--chat-font-scale) * 10px);
+    opacity: 0.85;
+}
+.path-chip-failed {
+    border-color: rgba(255, 130, 130, 0.6);
+    background: rgba(255, 110, 110, 0.16);
+}
+
+/* Web links. Underlined like a link rather than boxed like a chip, so a path
+   and a URL in the same sentence stay visibly different things. The label is
+   already shortened in JS; `anywhere` is the backstop for a long unbroken host
+   in a narrow panel. */
+.url-link {
+    all: unset;
+    display: inline;
+    color: #9fb2ff;
+    font: inherit;
+    text-decoration: underline;
+    text-decoration-color: rgba(159, 178, 255, 0.45);
+    text-underline-offset: 2px;
+    cursor: pointer;
+    overflow-wrap: anywhere;
+    max-width: 100%;
+}
+.url-link:hover {
+    color: #c2cdff;
+    text-decoration-color: rgba(194, 205, 255, 0.9);
+}
+.url-link:focus-visible {
+    outline: 2px solid rgba(160, 175, 255, 0.9);
+    outline-offset: 2px;
+    border-radius: 3px;
+}
+.url-link-failed {
+    color: #ff9a9a;
+    text-decoration-color: rgba(255, 154, 154, 0.7);
+}
+
+/* ---------- markdown ---------- */
+
+/* Agents write markdown, so the panel renders it. The whole set is deliberately
+   restrained: chat is a conversation, not a document, and a bubble that starts
+   growing 24px headings and 16px margins stops looking like something said and
+   starts looking like something published. Sizes stay tied to the chat font
+   scale so the user's own text-size choice still governs everything. */
+.md {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    white-space: normal;
+}
+.md > :first-child {
+    margin-top: 0;
+}
+.md > :last-child {
+    margin-bottom: 0;
+}
+
+/* Paragraphs keep pre-wrap: a soft line break inside one was written on
+   purpose, and agents lay out short lists of facts that way. */
+.md-p {
+    margin: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.md-heading {
+    margin: 2px 0 0;
+    font-size: calc(var(--chat-font-scale) * 13px);
+    font-weight: 650;
+    line-height: 1.35;
+    letter-spacing: 0.01em;
+}
+.md-h1,
+.md-h2 {
+    font-size: calc(var(--chat-font-scale) * 14px);
+    font-weight: 700;
+}
+.md-h4,
+.md-h5,
+.md-h6 {
+    opacity: 0.85;
+}
+
+.md-list {
+    margin: 0;
+    padding-left: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.md-list li {
+    overflow-wrap: anywhere;
+}
+/* A nested list is part of the same thought as its parent item, so it tightens
+   rather than opening up a new gap. */
+.md-list .md-list {
+    margin-top: 3px;
+    padding-left: 16px;
+}
+.md-list ::marker {
+    color: rgba(255, 255, 255, 0.45);
+}
+
+.md-quote {
+    margin: 0;
+    padding: 1px 0 1px 9px;
+    border-left: 2px solid rgba(159, 178, 255, 0.4);
+    color: rgba(255, 255, 255, 0.78);
+}
+.bubble-user .md-quote {
+    border-left-color: rgba(255, 255, 255, 0.5);
+    color: rgba(255, 255, 255, 0.88);
+}
+
+.md-inline-code {
+    padding: 1px 4px;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.12);
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: calc(var(--chat-font-scale) * 11.5px);
+    overflow-wrap: anywhere;
+}
+.bubble-user .md-inline-code {
+    background: rgba(0, 0, 0, 0.18);
+}
+
+.md-code {
+    margin: 0;
+    padding: 8px 10px;
+    border-radius: 9px;
+    background: rgba(0, 0, 0, 0.28);
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: calc(var(--chat-font-scale) * 11.5px);
+    line-height: 1.45;
+    /* Code is the one thing that must not be re-wrapped: a broken line is a
+       broken command. It scrolls sideways instead. */
+    white-space: pre;
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+.bubble-user .md-code {
+    background: rgba(0, 0, 0, 0.22);
+}
+
+.md-rule {
+    margin: 2px 0;
+    border: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+/* ---------- look settings ---------- */
+
+.setting {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+.setting-label {
+    font-size: calc(var(--chat-font-scale) * 9px);
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--dim);
+}
+.setting-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+/* ---------- dictation ---------- */
+
+.voice-state {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 12px 8px;
+    padding: 6px 10px;
+    border-radius: 12px;
+    background: rgba(111, 131, 255, 0.16);
+    border: 1px solid rgba(140, 155, 255, 0.4);
+    font-size: calc(var(--chat-font-scale) * 11px);
+}
+.voice-state.bad {
+    background: rgba(255, 117, 133, 0.14);
+    border-color: rgba(255, 117, 133, 0.45);
+}
+.voice-text {
+    flex: 1;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+.voice-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--danger);
+    flex: none;
+    animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+    0%,
+    100% {
+        opacity: 0.35;
+        box-shadow: 0 0 0 0 rgba(255, 117, 133, 0);
+    }
+    50% {
+        opacity: 1;
+        box-shadow: 0 0 0 4px rgba(255, 117, 133, 0.18);
+    }
+}
+.icon-button.mic.on {
+    background: rgba(255, 117, 133, 0.35);
+}

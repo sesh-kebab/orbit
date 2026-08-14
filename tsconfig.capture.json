@@ -1,0 +1,12 @@
+{
+    // The dev-only asset capture harness (tools/capture). It is never built and
+    // nothing in src/ imports it, but it does import the real components, so it
+    // is typechecked against them to stop it rotting.
+    "extends": "./tsconfig.web.json",
+    "include": [
+        "tools/capture/**/*.ts",
+        "tools/capture/**/*.tsx",
+        "src/renderer/env.d.ts",
+        "src/shared/**/*.ts"
+    ]
+}
