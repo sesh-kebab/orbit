@@ -5,7 +5,10 @@
   "description": "Orbit \u2014 an expressive desktop AI companion that orchestrates Copilot agents",
   "main": "./out/main/index.js",
   "type": "module",
-  "author": "sesh-kebab",
+  "author": {
+    "name": "sesh-kebab",
+    "email": "sesh-kebab@users.noreply.github.com"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -85,7 +85,7 @@ jobs:
       # Kept regardless of whether anything was published, so a dry run still
       # produces something to download and try.
       - name: Upload installers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: orbit-${{ matrix.name }}
           path: |
