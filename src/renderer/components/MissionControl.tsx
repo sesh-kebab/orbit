@@ -3,6 +3,7 @@ import type { HistoryEntry, OrbitState, Schedule } from "../../shared/types.js";
 import { CHAT_FONTS, CHAT_FONT_SIZES } from "../../shared/types.js";
 import { elapsedLabel } from "../mood.js";
 import { onScene } from "../scene.js";
+import { Icon } from "./Icon.js";
 import { AgentRow } from "./Message.js";
 
 type Tab = "agents" | "watchers" | "memory" | "history" | "look";
@@ -14,6 +15,14 @@ const TABS: Array<{ id: Tab; label: string }> = [
     { id: "history", label: "log" },
     { id: "look", label: "look" },
 ];
+
+const TAB_HELP: Record<Tab, string> = {
+    agents: "Every task Orbit has delegated — click one for its full activity feed",
+    watchers: "Standing jobs that run on a schedule",
+    memory: "What Orbit remembers about you, and anything waiting on you",
+    history: "An append-only timeline of everything that has happened",
+    look: "Change how the panel looks",
+};
 
 export function MissionControl({ state }: { state: OrbitState }): React.JSX.Element {
     const [tab, setTab] = useState<Tab>("agents");
@@ -34,6 +43,7 @@ export function MissionControl({ state }: { state: OrbitState }): React.JSX.Elem
                     <button
                         key={entry.id}
                         className={`tab ${tab === entry.id ? "on" : ""}`}
+                        title={TAB_HELP[entry.id]}
                         onClick={() => setTab(entry.id)}
                     >
                         {entry.label}
@@ -54,8 +64,12 @@ export function MissionControl({ state }: { state: OrbitState }): React.JSX.Elem
             </div>
 
             <div className="deck-foot">
-                <button className="link" onClick={() => void window.orbit.chooseWorkspace()}>
-                    📁 {shortenPath(state.settings.workspace)}
+                <button
+                    className="link"
+                    title="Change where agents work by default"
+                    onClick={() => void window.orbit.chooseWorkspace()}
+                >
+                    <Icon name="folder" /> {shortenPath(state.settings.workspace)}
                 </button>
                 <span className="muted small">
                     {state.usage.agentsRun} run{state.usage.agentsRun === 1 ? "" : "s"} ·{" "}
@@ -77,7 +91,11 @@ function AgentsTab({ state }: { state: OrbitState }): React.JSX.Element {
                 <AgentDetail key={agent.id} state={state} agentId={agent.id} />
             ))}
             {state.agents.some((a) => a.status === "done" || a.status === "failed") && (
-                <button className="link center" onClick={() => void window.orbit.clearFinished()}>
+                <button
+                    className="link center"
+                    title="Remove finished and failed agents from this list"
+                    onClick={() => void window.orbit.clearFinished()}
+                >
                     clear finished
                 </button>
             )}
@@ -149,7 +167,11 @@ function WatchersTab({ state }: { state: OrbitState }): React.JSX.Element {
                 <WatcherRow key={schedule.id} schedule={schedule} />
             ))}
             {archived.length > 0 && (
-                <button className="link center" onClick={() => setShowArchived((value) => !value)}>
+                <button
+                    className="link center"
+                    title="Archived watchers keep their history but never run"
+                    onClick={() => setShowArchived((value) => !value)}
+                >
                     {showArchived ? "hide" : "show"} {archived.length} archived
                 </button>
             )}
@@ -167,7 +189,7 @@ function WatcherRow({ schedule }: { schedule: Schedule }): React.JSX.Element {
         <div className={`agent-block ${schedule.enabled ? "" : "off"}`}>
             <div className="agent-row" onClick={() => setOpen((value) => !value)}>
                 <span className={`agent-dot ${running ? "spinning" : ""}`} style={{ color: "#8FD8FF", borderColor: "#8FD8FF" }}>
-                    {running ? "" : archived ? "🗄" : "⏱"}
+                    {running ? "" : <Icon name={archived ? "archive" : "clock"} />}
                 </span>
                 <div className="agent-main">
                     <span className="agent-title">{schedule.title}</span>
@@ -181,35 +203,38 @@ function WatcherRow({ schedule }: { schedule: Schedule }): React.JSX.Element {
                 {!archived && (
                     <button
                         className="icon-button"
-                        title={schedule.enabled ? "Pause" : "Resume"}
+                        title={schedule.enabled ? "Pause this watcher" : "Resume this watcher"}
+                        aria-label={schedule.enabled ? "Pause this watcher" : "Resume this watcher"}
                         onClick={(event) => {
                             event.stopPropagation();
                             void window.orbit.setScheduleEnabled(schedule.id, !schedule.enabled);
                         }}
                     >
-                        {schedule.enabled ? "❚❚" : "▶"}
+                        <Icon name={schedule.enabled ? "pause" : "play"} />
                     </button>
                 )}
                 <button
                     className="icon-button"
                     title={archived ? "Restore" : "Archive — keeps its history, stops it running"}
+                    aria-label={archived ? "Restore this watcher" : "Archive this watcher"}
                     onClick={(event) => {
                         event.stopPropagation();
                         void window.orbit.setScheduleArchived(schedule.id, !archived);
                     }}
                 >
-                    {archived ? "↩" : "🗄"}
+                    <Icon name={archived ? "unarchive" : "archive"} />
                 </button>
                 {!archived && (
                     <button
                         className="icon-button"
-                        title="Run now"
+                        title="Run this watcher now"
+                        aria-label="Run this watcher now"
                         onClick={(event) => {
                             event.stopPropagation();
                             void window.orbit.runScheduleNow(schedule.id);
                         }}
                     >
-                        ⟳
+                        <Icon name="run" />
                     </button>
                 )}
             </div>
@@ -227,7 +252,11 @@ function WatcherRow({ schedule }: { schedule: Schedule }): React.JSX.Element {
                         </code>
                     </div>
                     {schedule.lastResult && <p className="result">{schedule.lastResult}</p>}
-                    <button className="link danger" onClick={() => void window.orbit.deleteSchedule(schedule.id)}>
+                    <button
+                        className="link danger"
+                        title="Delete this watcher permanently"
+                        onClick={() => void window.orbit.deleteSchedule(schedule.id)}
+                    >
                         delete watcher
                     </button>
                 </div>
@@ -245,8 +274,12 @@ function MemoryTab({ state }: { state: OrbitState }): React.JSX.Element {
     const openItems = state.openItems.filter((item) => !item.resolved);
     return (
         <div className="deck-list">
-            <button className="link" onClick={() => void window.orbit.openPersona()}>
-                ✎ edit personality file
+            <button
+                className="link"
+                title="Open persona.md — the text appended to Orbit's system prompt"
+                onClick={() => void window.orbit.openPersona()}
+            >
+                <Icon name="edit" /> edit personality file
             </button>
             {openItems.map((item) => (
                 <div key={item.id} className="memory-row">
@@ -255,9 +288,10 @@ function MemoryTab({ state }: { state: OrbitState }): React.JSX.Element {
                     <button
                         className="icon-button"
                         title="Mark as dealt with"
+                        aria-label="Mark as dealt with"
                         onClick={() => void window.orbit.resolveOpenItem(item.id)}
                     >
-                        ✕
+                        <Icon name="check" />
                     </button>
                 </div>
             ))}
@@ -273,9 +307,10 @@ function MemoryTab({ state }: { state: OrbitState }): React.JSX.Element {
                         <button
                             className="icon-button"
                             title="Forget this"
+                            aria-label="Forget this"
                             onClick={() => void window.orbit.forgetMemory(memory.id)}
                         >
-                            ✕
+                            <Icon name="trash" />
                         </button>
                     </div>
                 ))
@@ -313,6 +348,7 @@ function LookTab({ state }: { state: OrbitState }): React.JSX.Element {
                             key={font.id}
                             className={`chip ${chatFontFamily === font.id ? "chip-primary" : "chip-neutral"}`}
                             style={{ fontFamily: font.stack }}
+                            title={`Set the chat font to ${font.label}`}
                             onClick={() => void window.orbit.setSettings({ chatFontFamily: font.id })}
                         >
                             {font.label}
@@ -327,6 +363,7 @@ function LookTab({ state }: { state: OrbitState }): React.JSX.Element {
                         <button
                             key={size}
                             className={`chip ${chatFontSize === size ? "chip-primary" : "chip-neutral"}`}
+                            title={`Set the chat text size to ${size}`}
                             onClick={() => void window.orbit.setSettings({ chatFontSize: size })}
                         >
                             {size}
@@ -341,6 +378,7 @@ function LookTab({ state }: { state: OrbitState }): React.JSX.Element {
                         <button
                             key={value}
                             className={`chip ${Math.abs(panelOpacity - value) < 0.01 ? "chip-primary" : "chip-neutral"}`}
+                            title={`Make the panels ${Math.round(value * 100)}% solid`}
                             onClick={() => void window.orbit.setSettings({ panelOpacity: value })}
                         >
                             {Math.round(value * 100)}%

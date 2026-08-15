@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AgentView, ChatMessage, OrbitState, PathInfo, PendingRequest } from "../../shared/types.js";
 import { agentColor, elapsedLabel } from "../mood.js";
+import { Icon } from "./Icon.js";
 import { parseMarkdown, isPlainText, type Block, type Inline } from "../markdown.js";
 import { pathCandidates, pathLabel, splitPathSegments, urlLabel } from "../paths.js";
 
@@ -282,7 +283,9 @@ function PathChip({ label, info }: { label: string; info: PathInfo }): React.JSX
             title={failed ?? `${openVerb(info)} — ${target}\nAlt-click to reveal in Finder`}
             onClick={(event) => act(event.altKey || event.shiftKey)}
         >
-            <span className="path-chip-icon">{info.isDirectory ? "🗂" : "📄"}</span>
+            <span className="path-chip-icon">
+                <Icon name={info.isDirectory ? "folderOpen" : "file"} />
+            </span>
             <span className="path-chip-label">{shortenPath(label)}</span>
         </button>
     );
@@ -363,7 +366,9 @@ function CompletionCard({
     return (
         <div className={`card ${failed ? "card-error" : "card-done"}`}>
             <div className="card-head">
-                <span className="tick">{failed ? "!" : "✓"}</span>
+                <span className="tick">
+                    <Icon name={failed ? "alert" : "check"} />
+                </span>
                 <span className="card-title">{agent?.title ?? "agent"}</span>
                 {agent && <span className="muted">{elapsedLabel(agent.createdAt, agent.endedAt)}</span>}
             </div>
@@ -414,6 +419,7 @@ function RequestCard({
                     <button
                         key={option.id}
                         className={`chip chip-${option.tone}`}
+                        title={`Answer: ${option.label}`}
                         onClick={() => answer(option.id)}
                     >
                         {option.label}
@@ -464,7 +470,13 @@ export function AgentRow({
                 className={`agent-dot ${running ? "spinning" : ""}`}
                 style={{ borderColor: color, color }}
             >
-                {agent.status === "done" ? "✓" : agent.status === "failed" ? "!" : ""}
+                {agent.status === "done" ? (
+                    <Icon name="check" />
+                ) : agent.status === "failed" ? (
+                    <Icon name="alert" />
+                ) : (
+                    ""
+                )}
             </span>
             <div className="agent-main">
                 <span className="agent-title">{agent.title}</span>
@@ -477,11 +489,12 @@ export function AgentRow({
             {!compact && (
                 <button
                     className="icon-button"
-                    title="Cancel this agent"
+                    title="Stop this agent"
+                    aria-label="Stop this agent"
                     onClick={() => void window.orbit.cancelAgent(agent.id)}
                     disabled={!running && !blocked}
                 >
-                    ✕
+                    <Icon name="close" />
                 </button>
             )}
             <span className="agent-meta">

@@ -4,6 +4,7 @@ import { isLive } from "../../shared/types.js";
 import { MOODS, headline } from "../mood.js";
 import type { Mood } from "../../shared/types.js";
 import { onScene } from "../scene.js";
+import { Icon } from "./Icon.js";
 import { Message, useAutoScroll } from "./Message.js";
 import { MissionControl } from "./MissionControl.js";
 
@@ -117,26 +118,35 @@ export function ChatPanel({ state, mood, onClose, onTypingChange }: Props): Reac
                             ? "Approving everything. Click to require approval again."
                             : "Asking before commands and edits. Click to approve everything (YOLO)."
                     }
+                    aria-label={state.settings.yolo ? "Require approval" : "Approve everything"}
                     onClick={() => void window.orbit.setSettings({ yolo: !state.settings.yolo })}
                 >
-                    {state.settings.yolo ? "⚡" : "🛡"}
+                    <Icon name={state.settings.yolo ? "bolt" : "shield"} />
                 </button>
                 <button
                     className={`icon-button ${deckOpen ? "on" : ""}`}
                     title="Mission control"
+                    aria-label="Mission control"
                     onClick={() => setDeckOpen((open) => !open)}
                 >
-                    ▤{live.length > 0 && <em className="count">{live.length}</em>}
+                    <Icon name="deck" />
+                    {live.length > 0 && <em className="count">{live.length}</em>}
                 </button>
                 <button
                     className="icon-button"
                     title="Restart Orbit to load new code, keeping this conversation"
+                    aria-label="Restart Orbit to load new code, keeping this conversation"
                     onClick={() => void window.orbit.softRestart()}
                 >
-                    ⟳
+                    <Icon name="restart" />
                 </button>
-                <button className="icon-button" title="Close" onClick={onClose}>
-                    ✕
+                <button
+                    className="icon-button"
+                    title="Hide the chat panel"
+                    aria-label="Hide the chat panel"
+                    onClick={onClose}
+                >
+                    <Icon name="close" />
                 </button>
             </header>
 
@@ -158,7 +168,12 @@ export function ChatPanel({ state, mood, onClose, onTypingChange }: Props): Reac
             {state.messages.length < 3 && !voice.busy && voice.state === "idle" && (
                 <div className="quick">
                     {QUICK_ACTIONS.map((action) => (
-                        <button key={action} className="chip chip-neutral" onClick={() => void window.orbit.send(action)}>
+                        <button
+                            key={action}
+                            className="chip chip-neutral"
+                            title={`Ask Orbit: ${action}`}
+                            onClick={() => void window.orbit.send(action)}
+                        >
                             {action}
                         </button>
                     ))}
@@ -195,6 +210,7 @@ export function ChatPanel({ state, mood, onClose, onTypingChange }: Props): Reac
                 <button
                     type="button"
                     className={`icon-button mic ${voice.busy ? "on" : ""}`}
+                    aria-label={voice.busy ? "Stop dictating and send" : "Dictate a message"}
                     disabled={!ready || voice.support?.available === false}
                     title={
                         voice.support?.available === false
@@ -205,11 +221,17 @@ export function ChatPanel({ state, mood, onClose, onTypingChange }: Props): Reac
                     }
                     onClick={() => voice.toggle()}
                 >
-                    {voice.busy ? "■" : "🎙"}
+                    <Icon name={voice.busy ? "stop" : "mic"} />
                 </button>
                 {state.orbitBusy ? (
-                    <button type="button" className="send stop" title="Stop" onClick={() => void window.orbit.abort()}>
-                        ■
+                    <button
+                        type="button"
+                        className="send stop"
+                        title="Stop what Orbit is doing"
+                        aria-label="Stop what Orbit is doing"
+                        onClick={() => void window.orbit.abort()}
+                    >
+                        <Icon name="stop" />
                     </button>
                 ) : (
                     <button
@@ -217,8 +239,10 @@ export function ChatPanel({ state, mood, onClose, onTypingChange }: Props): Reac
                         className="send"
                         style={{ background: palette.accent }}
                         disabled={!draft.trim() || voice.busy}
+                        title="Send (Enter) · Shift+Enter for a new line"
+                        aria-label="Send message"
                     >
-                        ↑
+                        <Icon name="send" />
                     </button>
                 )}
             </form>
@@ -241,8 +265,13 @@ function VoiceStatus({ voice }: { voice: Dictation }): React.JSX.Element {
         return (
             <div className="voice-state bad">
                 <span className="voice-text">{voice.error}</span>
-                <button className="icon-button tiny" title="Dismiss" onClick={() => voice.dismiss()}>
-                    ✕
+                <button
+                    className="icon-button tiny"
+                    title="Dismiss"
+                    aria-label="Dismiss"
+                    onClick={() => voice.dismiss()}
+                >
+                    <Icon name="close" />
                 </button>
             </div>
         );
@@ -251,8 +280,13 @@ function VoiceStatus({ voice }: { voice: Dictation }): React.JSX.Element {
         <div className="voice-state">
             <i className="voice-dot" />
             <span className="voice-text">{VOICE_LABELS[voice.state]}</span>
-            <button className="icon-button tiny" title="Discard (Esc)" onClick={() => voice.cancel()}>
-                ✕
+            <button
+                className="icon-button tiny"
+                title="Discard what you said (Esc)"
+                aria-label="Discard what you said"
+                onClick={() => voice.cancel()}
+            >
+                <Icon name="close" />
             </button>
         </div>
     );

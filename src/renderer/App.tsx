@@ -3,6 +3,7 @@ import type { OrbitState } from "../shared/types.js";
 import { CHAT_FONT_BASE, chatFontStack, isLive } from "../shared/types.js";
 import { Buddy } from "./components/Buddy.js";
 import { ChatPanel } from "./components/ChatPanel.js";
+import { Icon } from "./components/Icon.js";
 import { AgentShelf } from "./components/Message.js";
 import { deriveMood } from "./mood.js";
 import { onScene } from "./scene.js";
@@ -92,12 +93,14 @@ export function App(): React.JSX.Element {
                             <p>{bubble.text}</p>
                             <button
                                 className="icon-button tiny"
+                                title="Dismiss"
+                                aria-label="Dismiss"
                                 onClick={(event) => {
                                     event.stopPropagation();
                                     void window.orbit.dismissBubble();
                                 }}
                             >
-                                ✕
+                                <Icon name="close" />
                             </button>
                         </div>
                     )

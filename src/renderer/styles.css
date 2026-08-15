@@ -119,6 +119,22 @@ body,
     box-shadow: 0 0 14px rgba(255, 117, 133, 0.8);
 }
 
+/* ---------- icons ---------- */
+
+/*
+ * Icons are sized in `em` so they track the font-size of whatever control they
+ * sit in, and inherit colour through `currentColor`. That is what keeps a 26px
+ * header button and a 20px inline button visually consistent without either
+ * one needing its own icon rule.
+ */
+.icon {
+    width: 1.2em;
+    height: 1.2em;
+    display: block;
+    flex: none;
+    shape-rendering: geometricPrecision;
+}
+
 /* ---------- shared surfaces ---------- */
 
 .speech,
@@ -251,17 +267,20 @@ body,
 
 .icon-button {
     all: unset;
-    width: 24px;
-    height: 24px;
+    width: 26px;
+    height: 26px;
     display: grid;
     place-items: center;
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.08);
     color: var(--ink);
-    font-size: calc(var(--chat-font-scale) * 11px);
+    font-size: calc(var(--chat-font-scale) * 12px);
     cursor: pointer;
     position: relative;
     flex: none;
+    transition:
+        background 120ms ease,
+        color 120ms ease;
 }
 .icon-button:hover {
     background: rgba(255, 255, 255, 0.18);
@@ -274,9 +293,9 @@ body,
     background: rgba(255, 255, 255, 0.22);
 }
 .icon-button.tiny {
-    width: 18px;
-    height: 18px;
-    font-size: calc(var(--chat-font-scale) * 9px);
+    width: 20px;
+    height: 20px;
+    font-size: calc(var(--chat-font-scale) * 10px);
 }
 .icon-button .count {
     position: absolute;
@@ -515,6 +534,9 @@ body,
 }
 .link {
     all: unset;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     font-size: calc(var(--chat-font-scale) * 10px);
     color: var(--muted);
     cursor: pointer;
@@ -559,6 +581,10 @@ body,
     font-size: calc(var(--chat-font-scale) * 9px);
     font-weight: 800;
     flex: none;
+}
+.agent-dot .icon {
+    width: 0.95em;
+    height: 0.95em;
 }
 .agent-dot.small {
     width: 14px;
@@ -1033,6 +1059,8 @@ body,
     outline-offset: 2px;
 }
 .path-chip-icon {
+    display: flex;
+    align-items: center;
     font-size: calc(var(--chat-font-scale) * 10px);
     opacity: 0.85;
 }
