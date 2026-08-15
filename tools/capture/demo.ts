@@ -27,6 +27,7 @@ const SETTINGS: Settings = {
     autoApproveReads: true,
     requestTimeoutMinutes: 10,
     agentTimeoutMinutes: 30,
+    copilotPath: "",
     panelOpacity: 0.88,
     chatFontFamily: "rounded",
     chatFontSize: 13,

@@ -1,0 +1,102 @@
+# Packaging configuration for electron-builder.
+#
+# Kept out of package.json on purpose: this file carries most of the explanation
+# for why Orbit's installers look the way they do, and package.json is a poor
+# place for prose.
+
+appId: dev.seshkebab.orbit
+productName: Orbit
+copyright: Copyright © 2026 Seshi Chemudugunta
+
+directories:
+  output: dist
+  buildResources: build
+
+# Only the built output and the manifest. `out/` is what electron-vite emits;
+# src/ and tools/ have no business inside a shipped app.
+files:
+  - out/**/*
+  - package.json
+  # The Copilot runtime is ~326 MB per platform and Orbit deliberately does not
+  # ship it: a user needs the CLI installed and logged in regardless, because
+  # authentication lives in ~/.copilot and is established by `copilot /login`.
+  # Bundling a second copy would quadruple the download to save nobody a step.
+  # See src/main/runtime.ts, which finds the user's own binary instead.
+  - "!node_modules/@github/copilot/**"
+  - "!node_modules/@github/copilot-*/**"
+
+# The tray marks are read from disk at runtime rather than bundled through the
+# renderer, because the tray lives in the main process.
+extraResources:
+  - from: build/tray
+    to: tray
+    filter:
+      - "*.png"
+
+# Every platform derives its icon from build/icon.png, generated from the real
+# Buddy component by `npm run icons`.
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    # zip alongside dmg: it is what an updater would consume later, and it is
+    # the format people expect when they just want the .app.
+    - target: zip
+      arch: [arm64, x64]
+  # Orbit lives in the menu bar and has no Dock presence.
+  extendInfo:
+    LSUIElement: true
+    NSMicrophoneUsageDescription: Orbit uses the microphone only while you hold dictation open, to turn what you say into a message.
+    NSSpeechRecognitionUsageDescription: Orbit transcribes dictation with the on-device recogniser so nothing you say leaves the Mac.
+  # Unsigned for now. Hardened runtime and notarisation need an Apple Developer
+  # account; leaving identity null keeps builds reproducible on CI without
+  # secrets, and the release notes explain the Gatekeeper prompt.
+  identity: null
+  notarize: false
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+
+linux:
+  category: Utility
+  synopsis: An expressive desktop companion that orchestrates Copilot agents
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+deb:
+  # The tray needs a StatusNotifier host; without it the icon simply will not
+  # appear on some desktops, which looks like a broken app rather than a
+  # missing dependency.
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libayatana-appindicator3-1
+
+publish:
+  provider: github
+  owner: sesh-kebab
+  repo: orbit
+  # Nothing goes public without a human looking at it first.
+  releaseType: draft

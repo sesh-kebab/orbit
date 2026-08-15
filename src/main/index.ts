@@ -310,11 +310,44 @@ async function chooseWorkspace(): Promise<void> {
 
 // MARK: - Tray
 
+/**
+ * macOS renders a text title next to the tray icon, which is where Orbit's
+ * face lives. Windows and Linux have no such thing — `setTitle` is a no-op —
+ * so on those platforms the state has to be carried by the image instead.
+ */
+const TRAY_FACES = { idle: "◕‿◕", attention: "◉_◉", error: "×_×" } as const;
+
+type TrayState = keyof typeof TRAY_FACES;
+
+function trayImagePath(state: TrayState): string {
+    const file = state === "attention" ? "attention.png" : state === "error" ? "error.png" : "idle.png";
+    // Packaged, the icons are copied in as extraResources; from source they are
+    // wherever `npm run icons` last wrote them.
+    return app.isPackaged
+        ? join(process.resourcesPath, "tray", file)
+        : join(import.meta.dirname, "../../build/tray", file);
+}
+
+function applyTrayState(state: TrayState): void {
+    if (!tray) return;
+    if (process.platform === "darwin") {
+        tray.setTitle(TRAY_FACES[state]);
+        return;
+    }
+    const image = nativeImage.createFromPath(trayImagePath(state));
+    if (!image.isEmpty()) tray.setImage(image);
+}
+
 function createTray(): void {
-    // A tiny transparent image keeps macOS happy; the title carries the face.
-    tray = new Tray(nativeImage.createEmpty());
-    tray.setTitle("◕‿◕");
+    // macOS carries the state in the title, so it starts from an empty image;
+    // everywhere else the image is the only signal there is.
+    const initial =
+        process.platform === "darwin"
+            ? nativeImage.createEmpty()
+            : nativeImage.createFromPath(trayImagePath("idle"));
+    tray = new Tray(initial);
     tray.setToolTip("Orbit");
+    applyTrayState("idle");
     refreshTrayMenu();
     store.on("state", refreshTrayMenu);
 }
@@ -412,7 +445,7 @@ function refreshTrayMenu(): void {
     tray.setContextMenu(menu);
 
     const live = state.agents.filter((a) => a.status === "needs-input").length;
-    tray.setTitle(live > 0 ? "◉_◉" : state.runtime === "error" ? "×_×" : "◕‿◕");
+    applyTrayState(live > 0 ? "attention" : state.runtime === "error" ? "error" : "idle");
 }
 
 function togglePanel(): void {

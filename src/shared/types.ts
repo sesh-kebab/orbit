@@ -288,6 +288,11 @@ export interface Settings {
      * instead of hanging forever. 0 disables the timeout.
      */
     requestTimeoutMinutes: number;
+    /**
+     * Full path to the Copilot CLI. Empty means "find it automatically";
+     * set it when the CLI lives somewhere Orbit doesn't think to look.
+     */
+    copilotPath: string;
     /** Hard cap on a single agent run. 0 disables. */
     agentTimeoutMinutes: number;
     /**

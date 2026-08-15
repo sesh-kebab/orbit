@@ -103,27 +103,56 @@ and its panels, so it never gets in the way of what's behind it.
 
 **Requirements**
 
-- **macOS.** Orbit is an accessory app: no Dock icon, it lives in the menu bar as `◕‿◕`.
-  Dictation, "open in VS Code / reveal in Finder" and the menu-bar face are all macOS-only,
-  so other platforms aren't supported today.
-- **Node.js 20.19+**
 - **The GitHub Copilot CLI, signed in.** Run `copilot`, then `/login` (or `gh auth login`).
-  There is no API key and no provider config: Orbit uses your existing `~/.copilot` setup,
-  so your models, MCP servers and instructions all come along. Sign-in is checked at
-  startup, so if it's missing you're told immediately rather than on your first message.
 
-**Run it**
+  ```bash
+  npm i -g @github/copilot     # or: brew install copilot-cli
+  copilot                      # then /login
+  ```
+
+  This is not optional, and Orbit deliberately does not bundle it. The runtime is ~326 MB
+  per platform, and you would need the CLI anyway to sign in — authentication lives in
+  `~/.copilot`. Orbit drives the copy you already have, so your models, MCP servers and
+  instructions all come along. Sign-in is checked at startup, so a missing one is reported
+  immediately rather than on your first message.
+
+  If your CLI lives somewhere unusual, set `"copilotPath"` in `settings.json`.
+
+- **macOS, Windows or Linux.** Orbit is best on macOS, where it was built: it lives in the
+  menu bar as `◕‿◕`, dictation uses the on-device recogniser, and paths open in VS Code or
+  Finder. Elsewhere it runs with a tray icon instead of the face, no dictation, and paths
+  open through the system handler.
+
+**Install**
+
+Download the installer for your platform from
+[Releases](https://github.com/sesh-kebab/orbit/releases).
+
+> **macOS builds are unsigned.** Orbit has no Apple Developer certificate yet, so
+> Gatekeeper will refuse to open it on a double-click. Right-click the app and choose
+> **Open**, or clear the quarantine flag:
+>
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/Orbit.app
+> ```
+
+> **Windows and Linux builds are produced by CI but not manually tested.** Treat them as
+> unverified, and please report anything odd.
+
+**Or run from source** (Node.js 20.19+):
 
 ```bash
 npm install
 npm run dev      # hot-reloading development
-```
-
-Or build and run the bundled app:
-
-```bash
 npm run build    # typecheck + bundle to out/
 npm start        # run what you just built
+```
+
+**Build installers yourself:**
+
+```bash
+npm run icons    # regenerate app and tray icons from the character
+npm run dist     # installers for the current platform, into dist/
 ```
 
 **First run.** Orbit appears bottom-right with `◕‿◕` in the menu bar. Set **Workspace** from
@@ -146,9 +175,10 @@ flips it to approve-everything if you trust the room.
 
 ## Configuring it
 
-Everything is plain files under `~/Library/Application Support/Orbit/`, readable and
-editable without the app running. `settings.json` is watched, so hand-edits apply
-immediately — no restart.
+Everything is plain files in Orbit's data directory, readable and editable without the app
+running — `~/Library/Application Support/Orbit/` on macOS, `%APPDATA%\Orbit\` on Windows,
+`~/.config/Orbit/` on Linux. `settings.json` is watched, so hand-edits apply immediately —
+no restart.
 
 ```jsonc
 {
@@ -161,7 +191,8 @@ immediately — no restart.
   "panelOpacity": 0.88,                   // 0.3 – 1.0, how solid the panels look
   "chatFontFamily": "rounded",            // rounded · system · sf · inter · helvetica · mono
   "chatFontSize": 13,                     // 10 – 24, base chat text size in px
-  "meetingHeadsUp": true                  // nudge ~5 min before each calendar meeting
+  "meetingHeadsUp": true,                 // nudge ~5 min before each calendar meeting
+  "copilotPath": ""                       // full path to the Copilot CLI; "" finds it
 }
 ```
 
@@ -412,9 +443,9 @@ summary next to each shot.
 
 ## History
 
-This started as a SwiftUI mock-up with a fake brain, preserved in git history at commit
-`ea71125`. It was rewritten in Electron once it became clear the Copilot SDK is
-TypeScript-only.
+This started as a SwiftUI mock-up with a fake brain, and was rewritten in Electron once
+it became clear the Copilot SDK is TypeScript-only — which also made it cross-platform.
+That prototype history lives in a private repository and is not part of this one.
 
 ## Licence
 

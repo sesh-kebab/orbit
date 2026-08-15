@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
     CopilotClient,
+    RuntimeConnection,
     ToolSet,
     defineTool,
     type CopilotSession,
@@ -27,6 +28,7 @@ import type {
 import { isLive } from "../../shared/types.js";
 import { loadMcpServers } from "../mcp.js";
 import type { InteractionRecord, LoggedToolCall, Persistence, SessionSnapshot } from "../persistence.js";
+import { findCopilotCli, missingCliMessage } from "../runtime.js";
 import type { Store } from "../store.js";
 import { AgentRunner } from "./agentRunner.js";
 import { parseChoices, stripChoicesForStream } from "./choices.js";
@@ -61,6 +63,9 @@ import {
     previousRunBlock,
     ranSlot,
 } from "./schedules.js";
+
+/** Distinguishes 'not installed' from a runtime that started and then failed. */
+class MissingCliError extends Error {}
 
 const MAX_LIVE_AGENTS = 8;
 const BUBBLE_MS = 9000;
@@ -153,9 +158,17 @@ export class Orchestrator {
 
         try {
             const settings = this.settings;
+
+            // Orbit ships without the runtime, so the CLI has to be located
+            // before the client is built; see src/main/runtime.ts.
+            const cli = await findCopilotCli(settings.copilotPath);
+            if (!cli.path) throw new MissingCliError();
+            console.log(`[orbit] using Copilot CLI at ${cli.path} (found via ${cli.source})`);
+
             this.client = new CopilotClient({
                 logLevel: "error",
                 workingDirectory: settings.workspace,
+                connection: RuntimeConnection.forStdio({ path: cli.path }),
             });
             await this.client.start();
             await this.requireAuth();
@@ -174,7 +187,12 @@ export class Orchestrator {
             this.catchUpSchedules();
             this.ensureMeetingPlan();
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message =
+                error instanceof MissingCliError
+                    ? missingCliMessage()
+                    : error instanceof Error
+                      ? error.message
+                      : String(error);
             this.store.update((state) => {
                 state.runtime = "error";
                 state.runtimeError = message;

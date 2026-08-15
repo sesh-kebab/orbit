@@ -1,9 +1,14 @@
 node_modules/
-out/
-dist/
-build/
 .DS_Store
 *.log
 
+# electron-vite output, and electron-builder's installers.
+out/
+dist/
+
 # Debug frame dumps from the asset capture harness (CAPTURE_DUMP_FRAMES).
 .capture-frames/
+
+# build/ is electron-builder's buildResources directory and is deliberately
+# NOT ignored: it holds the generated app and tray icons, which CI needs in
+# order to package. Regenerate them with `npm run icons`.

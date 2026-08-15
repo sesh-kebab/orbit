@@ -1,0 +1,23 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { background: transparent; }
+
+#stage { position: relative; overflow: hidden; }
+
+/*
+ * The plate. A single hue rather than the mood palette: an app icon has to be
+ * one fixed thing, and idle mint is what Orbit looks like most of the time.
+ */
+.plate {
+    position: relative;
+    overflow: hidden;
+    background:
+        radial-gradient(120% 100% at 28% 18%, #3f5d7a 0%, #212a44 55%, #171a2c 100%);
+}
+
+.plate-art {
+    position: absolute;
+    transform-origin: center;
+}
+
+/* Tray marks are masks; colour is discarded, so only coverage matters. */
+.tray { display: block; }

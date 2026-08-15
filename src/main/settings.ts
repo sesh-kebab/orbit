@@ -18,6 +18,7 @@ const DEFAULTS: Settings = {
     // Agents get a full hour before the watchdog calls them stuck; this must
     // not be shorter than AGENT_IDLE_TIMEOUT_MS in agentRunner.ts, or a healthy
     // long-running agent is killed before its idle backstop ever fires.
+    copilotPath: "",
     agentTimeoutMinutes: 60,
     panelOpacity: 0.88,
     chatFontFamily: "rounded",

@@ -9,11 +9,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sesh-kebab/ai-desktop-companion.git"
+    "url": "git+https://github.com/sesh-kebab/orbit.git"
   },
-  "homepage": "https://github.com/sesh-kebab/ai-desktop-companion#readme",
+  "homepage": "https://github.com/sesh-kebab/orbit#readme",
   "bugs": {
-    "url": "https://github.com/sesh-kebab/ai-desktop-companion/issues"
+    "url": "https://github.com/sesh-kebab/orbit/issues"
   },
   "keywords": [
     "electron",
@@ -32,7 +32,11 @@
     "start": "electron-vite preview",
     "snapshot": "electron-vite build && ORBIT_SNAPSHOT=1 electron .",
     "capture:assets": "node tools/capture/run.mjs",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.capture.json"
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.capture.json",
+    "icons": "node tools/icons/run.mjs",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac"
   },
   "dependencies": {
     "@github/copilot-sdk": "^1.0.8",
@@ -44,6 +48,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.0",
     "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^4.0.0",
     "gifenc": "^1.0.3",
     "react": "^19.0.0",
