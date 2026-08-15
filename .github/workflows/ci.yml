@@ -22,12 +22,14 @@ jobs:
           node-version: 22
           cache: npm
 
-      # --omit=optional skips @github/copilot's eight platform runtimes, which
-      # are ~326 MB each. Orbit does not bundle the runtime (see
-      # src/main/runtime.ts), and nothing in the typecheck or the bundle needs
-      # the binary, so installing it would only buy a slower build.
+      # A full install, deliberately. `--omit=optional` looks tempting — it
+      # would skip @github/copilot's ~326 MB platform runtime, which Orbit does
+      # not bundle — but optional dependencies are also how rollup and esbuild
+      # ship their native binaries, and dropping those breaks the build
+      # outright. npm has no way to omit one package's optionals, and the cache
+      # makes the download cheap after the first run.
       - name: Install dependencies
-        run: npm ci --omit=optional
+        run: npm ci
 
       # `npm run build` is typecheck (all three tsconfigs) then electron-vite.
       - name: Build

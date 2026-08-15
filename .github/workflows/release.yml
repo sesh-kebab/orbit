@@ -63,10 +63,10 @@ jobs:
           node-version: 22
           cache: npm
 
-      # See ci.yml: the platform runtimes are ~326 MB each and Orbit does not
-      # ship them.
+      # Full install: see ci.yml. Optional dependencies carry rollup's and
+      # esbuild's native binaries, so they cannot be skipped.
       - name: Install dependencies
-        run: npm ci --omit=optional
+        run: npm ci
 
       - name: Build and package
         env:
