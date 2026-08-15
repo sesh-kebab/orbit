@@ -68,7 +68,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build and package
+      # electron-builder packages whatever is in out/; it does not build it.
+      # Without this the asar ships empty and the app has no entry point.
+      - name: Build
+        run: npm run build
+
+      - name: Package
         env:
           # electron-builder uploads to the draft release itself when a tag
           # triggered the run; on a manual run it only builds.
