@@ -1,7 +1,7 @@
 {
   "name": "orbit",
   "productName": "Orbit",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Orbit \u2014 an expressive desktop AI companion that orchestrates Copilot agents",
   "main": "./out/main/index.js",
   "type": "module",
