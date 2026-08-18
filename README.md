@@ -183,6 +183,8 @@ no restart.
 ```jsonc
 {
   "workspace": "/Users/you/code/project", // where agents run by default
+  "workspaceRepo": "",                    // git repo the daily sync files agent output into;
+                                          // "" means ~/git/workspace, ORBIT_WORKSPACE_REPO wins
   "model": "auto",                        // any id from `Model` in the menu bar
   "yolo": false,                          // approve every tool call
   "autoApproveReads": true,               // let read-only actions through silently
@@ -214,6 +216,18 @@ not suit you. The compiled persona only fixes what is true of Orbit whoever is r
 the panel is narrow, so replies stay short, and real work goes to agents. If your
 `persona.md` is still exactly as it shipped, an update may refresh it to the newer template;
 change a single character and it is yours for good.
+
+### Saving the day's work
+
+Agents write files into Copilot's session scratch space, which is per-machine and vanishes
+from view with the session. Once an evening Orbit copies them into a git repository, filed
+under the date each file was written, then commits and pushes. Ask for it any time ("save
+today's work") and it runs on demand.
+
+Point it at a repo with `workspaceRepo` in `settings.json`, or with the
+`ORBIT_WORKSPACE_REPO` environment variable, which takes priority. The default is
+`~/git/workspace`. Nothing is ever created or overwritten: with no git repository at that
+path the sync just reports that it skipped.
 
 ### MCP servers (optional)
 

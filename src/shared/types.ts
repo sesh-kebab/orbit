@@ -277,6 +277,12 @@ export interface WindowBounds {
 export interface Settings {
     /** Directory agents are allowed to work in by default. */
     workspace: string;
+    /**
+     * Git repository the workspace sync copies agent output into. Empty means
+     * "use the default", `~/git/workspace`. `ORBIT_WORKSPACE_REPO` overrides
+     * this. Sync is skipped entirely when no git repository is found there.
+     */
+    workspaceRepo: string;
     model: string;
     /** Approve every tool call without asking. Off by default, for good reason. */
     yolo: boolean;

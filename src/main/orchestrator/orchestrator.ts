@@ -63,6 +63,7 @@ import {
     previousRunBlock,
     ranSlot,
 } from "./schedules.js";
+import { describeSync, shouldAutoSync, syncWorkspace, workspaceRepoPath } from "../workspace.js";
 
 /** Distinguishes 'not installed' from a runtime that started and then failed. */
 class MissingCliError extends Error {}
@@ -860,6 +861,19 @@ export class Orchestrator {
                 }),
                 handler: async ({ proposalId, status, note, branch, commit, supersededBy }) =>
                     this.updateProposal(proposalId, status, { note, branch, commit, supersededBy }),
+            }),
+
+            defineTool("orbit_sync_workspace", {
+                description:
+                    "Copy every file agents have written for the user out of Copilot's session scratch space into their working repo, then commit and push. Files are filed under the date they were written, not today's. Use it when the user asks for the day's work to be saved, or when they mention picking something up later or from another machine. It also runs by itself once a day, so there is no need to promise it separately.",
+                skipPermission: true,
+                parameters: z.object({
+                    push: z
+                        .boolean()
+                        .optional()
+                        .describe("Push after committing. Defaults to true; pass false to commit locally only."),
+                }),
+                handler: async ({ push }) => this.syncWorkspaceNow({ push, announce: false }),
             }),
         ];
     }
@@ -2202,6 +2216,65 @@ export class Orchestrator {
         this.pushMessage({ role: "orbit", text, kind });
     }
 
+    // MARK: - Workspace sync
+
+    /** Guards against a slow push overlapping the next tick's attempt. */
+    private syncing = false;
+
+    /** The repo the sync should use, honouring the env var over the setting. */
+    private workspaceRepo(): string {
+        return workspaceRepoPath(this.store.get().settings.workspaceRepo);
+    }
+
+    /**
+     * Run a sync and report it the way the caller wants it reported.
+     *
+     * The tool wants the structured result to talk about; the nightly automatic
+     * pass wants a line in the panel, and only when something actually moved.
+     * "Already up to date" every evening is noise, and noise is how a useful
+     * routine gets muted.
+     */
+    private async syncWorkspaceNow(
+        options: { push?: boolean; announce: boolean } = { announce: false },
+    ): Promise<Record<string, unknown>> {
+        const repo = this.workspaceRepo();
+        if (this.syncing) {
+            return { status: "skipped", summary: "A sync is already running.", repo };
+        }
+        this.syncing = true;
+        try {
+            const report = await syncWorkspace({ repo, push: options.push });
+            const summary = describeSync(report);
+            if (options.announce && report.status === "synced") {
+                this.say(summary);
+            }
+            // A misconfigured repo is worth one line to the panel, because the
+            // alternative is a promise silently not being kept for weeks.
+            if (options.announce && report.status === "failed") {
+                this.say(summary, { type: "error" });
+            }
+            return { ...report, summary };
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            return { status: "failed", error: detail, summary: `Workspace sync failed: ${detail}.` };
+        } finally {
+            this.syncing = false;
+        }
+    }
+
+    /**
+     * The unattended pass. The day is marked as done whatever the outcome:
+     * a repo that is missing or wedged will still be missing or wedged in two
+     * minutes, and retrying every tick until midnight would turn one bad
+     * evening into a hundred identical failures.
+     */
+    private async autoSyncWorkspace(): Promise<void> {
+        const now = Date.now();
+        if (!shouldAutoSync(this.disk.loadWorkspaceSyncDay(), now)) return;
+        this.disk.saveWorkspaceSyncDay(localDay(now));
+        await this.syncWorkspaceNow({ announce: true });
+    }
+
     private nudge(text: string): void {
         if (this.store.get().chatOpen) return;
         this.setBubble(summarise(text, 200));
@@ -2298,6 +2371,12 @@ export class Orchestrator {
         // repeating, not worth pestering about.
         if (this.tickCount % 300 === 0 && this.store.get().runtime === "ready") {
             this.reRaiseOpenItems();
+        }
+        // Once an evening, and at most once a day. Guarded by its own stored
+        // date rather than by the tick count, so an app restarted at 22:00 does
+        // not sync twice and one left closed all evening still catches up.
+        if (this.tickCount % 200 === 0 && this.store.get().runtime === "ready") {
+            void this.autoSyncWorkspace();
         }
 
         const state: OrbitState = this.store.get();

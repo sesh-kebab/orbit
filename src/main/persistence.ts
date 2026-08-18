@@ -230,6 +230,25 @@ export class Persistence {
         this.writeJson("proposals.json", proposals);
     }
 
+    // MARK: - Workspace sync
+
+    /**
+     * The last local day the working repo was synced. One string, deliberately:
+     * the sync itself is idempotent — it re-derives everything from what is on
+     * disk — so the only thing worth remembering is whether today's automatic
+     * pass has already happened, and a date survives a corrupt-file reset
+     * without losing anything a re-run would not rediscover.
+     */
+    loadWorkspaceSyncDay(): string | undefined {
+        const saved = this.readJson<{ lastSyncedDay?: unknown } | undefined>("workspace-sync.json", undefined);
+        const day = saved?.lastSyncedDay;
+        return typeof day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : undefined;
+    }
+
+    saveWorkspaceSyncDay(day: string): void {
+        this.writeJson("workspace-sync.json", { lastSyncedDay: day, at: Date.now() });
+    }
+
     // MARK: - Window bounds
 
     /**

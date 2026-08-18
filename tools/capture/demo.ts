@@ -22,6 +22,7 @@ export const EPOCH = new Date("2025-06-12T08:34:00Z").getTime();
 
 const SETTINGS: Settings = {
     workspace: "~/code/lattice-web",
+    workspaceRepo: "",
     model: "claude-sonnet-4.5",
     yolo: false,
     autoApproveReads: true,
