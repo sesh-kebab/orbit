@@ -42,10 +42,16 @@ const STATE_FILES = [
 ];
 
 /**
- * The persona template exactly as the previous name shipped it. Compared
- * verbatim, so it must stay frozen even as the current template evolves.
+ * Persona templates Orbit has shipped and since replaced, compared verbatim.
+ * Each entry must stay frozen even as the current template evolves: an exact
+ * match is the only evidence that the file on disk is still untouched.
+ *
+ * The first is the template the previous product name shipped. The second is
+ * the first Orbit-named template, replaced when the output-shape guidance moved
+ * out of the compiled prompt and into this file so it could be edited.
  */
-const LEGACY_DEFAULT_PERSONA = `# Mochi's personality
+const SUPERSEDED_PERSONA_TEMPLATES = [
+    `# Mochi's personality
 
 Edit this file to shape how Mochi behaves. It is appended to Mochi's system
 prompt every time a session starts, so changes take effect on the next restart
@@ -60,7 +66,24 @@ prompt every time a session starts, so changes take effect on the next restart
 
 ## Things to never do
 - (add your own, e.g. "never push to main")
-`;
+`,
+    `# Orbit's personality
+
+Edit this file to shape how Orbit behaves. It is appended to Orbit's system
+prompt every time a session starts, so changes take effect on the next restart
+(or when you change the model or workspace).
+
+## Tone
+- Dry, quick, a little smug. One joke per message, maximum.
+- Short replies. This chat panel is narrow.
+
+## Standing instructions
+- (add your own, e.g. "always tell me the file paths you changed")
+
+## Things to never do
+- (add your own, e.g. "never push to main")
+`,
+];
 
 /**
  * Must run before anything reads userData — the very first thing on app ready.
@@ -83,17 +106,21 @@ export function migrateLegacyState(): void {
 
 /**
  * `persona.md` is seeded from a template and then owned by the user, so it is
- * never rewritten — except here. The old template introduced the assistant by
- * its previous name, and that file is appended verbatim to the system prompt,
- * which would leave Orbit calling itself Mochi in its own voice.
+ * never rewritten — except here. A file still byte-for-byte identical to a
+ * template Orbit has since replaced has never been edited, and leaving it in
+ * place would mean an existing install silently keeps an obsolete prompt: the
+ * old template introduced the assistant by its previous name, and the one after
+ * it predates the output-shape guidance moving out of the compiled prompt.
  *
- * Only a byte-for-byte copy of the old template is replaced. The moment the
- * user has changed anything at all, their file stands.
+ * Only an exact copy of a superseded template is replaced. The moment the user
+ * has changed anything at all, their file stands.
  */
 function reseedUntouchedPersona(path: string): void {
     try {
         if (!existsSync(path)) return;
-        if (readFileSync(path, "utf8").trim() !== LEGACY_DEFAULT_PERSONA.trim()) return;
+        const current = readFileSync(path, "utf8").trim();
+        if (current === DEFAULT_PERSONA.trim()) return;
+        if (!SUPERSEDED_PERSONA_TEMPLATES.some((template) => current === template.trim())) return;
         writeFileSync(path, DEFAULT_PERSONA, "utf8");
         console.log(`[orbit] refreshed the untouched persona template at ${path}`);
     } catch (error) {

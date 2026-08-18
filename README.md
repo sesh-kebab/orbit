@@ -207,6 +207,14 @@ standing instructions to be. It's prepended to the built-in orchestrator persona
 (`src/main/orchestrator/persona.ts`) on every session, alongside anything Orbit has
 remembered about you and live context like your workspace and current watchers.
 
+The file ships with a starting set of tone and output-shape preferences: one idea per
+message, lead with the decision, numbered lists over prose, a concrete next action, no
+em-dashes. They are defaults, not rules of the app, so delete or rewrite anything that does
+not suit you. The compiled persona only fixes what is true of Orbit whoever is running it:
+the panel is narrow, so replies stay short, and real work goes to agents. If your
+`persona.md` is still exactly as it shipped, an update may refresh it to the newer template;
+change a single character and it is yours for good.
+
 ### MCP servers (optional)
 
 **Orbit works fine with none.** Chat, agents, watchers, open items and self-evolution all
