@@ -258,6 +258,7 @@ export function baseState(patch: Partial<OrbitState> = {}): OrbitState {
         models: [{ id: SETTINGS.model, name: "Claude Sonnet 4.5" }],
         schedules: SCHEDULES,
         memories: MEMORIES,
+        leave: [],
         openItems: [],
         history: [
             { id: "h1", at: EPOCH - 6_000, kind: "agent.done", title: "Release notes for 0.4", detail: "38 commits summarised" },

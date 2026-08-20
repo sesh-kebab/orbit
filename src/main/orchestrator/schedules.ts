@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { Cadence, Schedule } from "../../shared/types.js";
+import type { Cadence, LeavePeriod, Schedule } from "../../shared/types.js";
+import {
+    describeSuppression,
+    hasSuppression,
+    nextAllowedRun,
+} from "./suppression.js";
 
 /** Next fire time for a cadence, relative to `from`. */
 export function nextRun(cadence: Cadence, from = Date.now()): number {
@@ -179,13 +184,35 @@ export function catchUpDecision(
     return { run, nextRunAt: slot + day, slotAt: slot };
 }
 
-/** Cadence for display, with the back-off called out when there is one. */
+/** Cadence for display, with the back-off and any silence rules called out. */
 export function describeSchedule(schedule: Schedule): string {
     const configured = describeCadence(schedule.cadence);
-    if (!isBackedOff(schedule)) return configured;
-    return `${configured}, backed off to ${describeCadence(effectiveCadence(schedule))} after ${
-        schedule.quietRuns ?? 0
-    } quiet runs`;
+    const base = !isBackedOff(schedule)
+        ? configured
+        : `${configured}, backed off to ${describeCadence(effectiveCadence(schedule))} after ${
+              schedule.quietRuns ?? 0
+          } quiet runs`;
+    const silence = describeSuppression(schedule);
+    return silence ? `${base} (${silence})` : base;
+}
+
+/**
+ * Next fire time for a schedule, skipping days it is not allowed to run.
+ *
+ * Daily watchers keep their slot on whichever day they land on: a briefing due
+ * at 08:00 that skips a weekend is wanted at 08:00 on Monday, not at midnight.
+ */
+export function nextAllowedRunFor(
+    schedule: Schedule,
+    leave: LeavePeriod[],
+    from = Date.now(),
+): number {
+    const candidate = nextRunFor(schedule, from);
+    if (!hasSuppression(schedule)) return candidate;
+    const cadence = schedule.cadence;
+    return nextAllowedRun(schedule, leave, candidate, (dayStart) =>
+        cadence.kind === "daily" ? dailySlotOn(cadence, dayStart)! : dayStart,
+    );
 }
 
 /**
@@ -257,6 +284,8 @@ export function makeSchedule(input: {
     task: string;
     cadence: Cadence;
     quiet?: boolean;
+    runDays?: number[];
+    skipOnLeave?: boolean;
 }): Schedule {
     return {
         id: randomUUID(),
@@ -270,6 +299,11 @@ export function makeSchedule(input: {
         quiet: input.quiet ?? false,
         quietRuns: 0,
         archived: false,
+        runDays: input.runDays,
+        skipOnLeave: input.skipOnLeave,
+        // Written with the property already set, so the prose migration has
+        // nothing to say about it.
+        suppressionDerived: true,
     };
 }
 

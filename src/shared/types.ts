@@ -164,6 +164,47 @@ export interface Schedule {
     archived?: boolean;
     /** When it was archived, by hand or automatically after a one-off fired. */
     archivedAt?: number;
+    /**
+     * Days this watcher is allowed to run, `0` Sunday through `6` Saturday.
+     * Absent means every day.
+     *
+     * This is deliberately a property rather than a paragraph in the brief. The
+     * prose version — "if today is Saturday, respond with exactly: NOTHING TO
+     * REPORT" — was pasted by hand into four separate schedules, still spawned
+     * an agent and still burned a run to say nothing, and the fifth schedule
+     * was always going to be written without it.
+     */
+    runDays?: number[];
+    /**
+     * Stay silent while the user is on leave, per the recorded leave periods.
+     * Same reasoning as `runDays`: the dates belong in one place that can go
+     * stale visibly, not hard-coded into every brief that happens to care.
+     */
+    skipOnLeave?: boolean;
+    /**
+     * The one-time migration from prose has already looked at this schedule.
+     * Set whether or not it found anything, so a brief the user has since
+     * rewritten by hand is never re-derived behind their back.
+     */
+    suppressionDerived?: boolean;
+}
+
+/**
+ * A stretch of days the user is away.
+ *
+ * Held once, centrally, because every watcher that cares about leave used to
+ * carry its own copy of the dates in its prompt — four copies of "on leave from
+ * 2026-08-21 returning around 2026-09-08", none of which would notice when that
+ * became untrue.
+ */
+export interface LeavePeriod {
+    id: string;
+    /** Local calendar day, `YYYY-MM-DD`, inclusive. */
+    from: string;
+    /** Local calendar day, `YYYY-MM-DD`, inclusive. */
+    to: string;
+    /** Why, in a few words. Shown back to the user when they ask. */
+    note?: string;
 }
 
 /**
@@ -247,6 +288,8 @@ export interface HistoryEntry {
         | "schedule.run"
         | "schedule.created"
         | "schedule.updated"
+        /** A run the clock skipped: wrong day of the week, or the user is away. */
+        | "schedule.skipped"
         | "memory.saved"
         | "open.raised"
         | "open.resolved"
@@ -423,6 +466,8 @@ export interface OrbitState {
     settings: Settings;
     models: Array<{ id: string; name: string }>;
     schedules: Schedule[];
+    /** Stretches the user is away. Watchers that opt in stay quiet through them. */
+    leave: LeavePeriod[];
     memories: MemoryNote[];
     /** Decisions still waiting on the user. Resolved ones are dropped. */
     openItems: OpenItem[];

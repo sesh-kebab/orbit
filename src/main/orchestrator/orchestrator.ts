@@ -17,12 +17,14 @@ import type {
     ChatKind,
     ChatMessage,
     HistoryEntry,
+    LeavePeriod,
     MemoryNote,
     OrbitState,
     OpenItem,
     PendingRequest,
     Proposal,
     ProposalStatus,
+    Schedule,
     Settings,
 } from "../../shared/types.js";
 import { isLive } from "../../shared/types.js";
@@ -58,11 +60,20 @@ import {
     isValidTime,
     localDay,
     makeSchedule,
-    nextRunFor,
+    nextAllowedRunFor,
     noteQuietRun,
     previousRunBlock,
     ranSlot,
 } from "./schedules.js";
+import {
+    deriveSuppression,
+    describeSuppression,
+    isDayKey,
+    makeLeavePeriod,
+    onLeave,
+    parseRunDays,
+    suppressionAt,
+} from "./suppression.js";
 
 /** Distinguishes 'not installed' from a runtime that started and then failed. */
 class MissingCliError extends Error {}
@@ -146,11 +157,13 @@ export class Orchestrator {
         this.proposals = this.disk.loadProposals();
         this.store.update((state) => {
             state.schedules = this.disk.loadSchedules();
+            state.leave = this.disk.loadLeave();
             state.memories = this.disk.loadMemories();
             state.openItems = this.disk.loadOpenItems();
             state.history = this.disk.loadHistory();
             state.personaPath = this.disk.personaPath;
         });
+        this.migrateSuppression();
 
         // Must happen before the session is created: the restored transcript is
         // folded into the system message so the model comes back with context.
@@ -597,6 +610,18 @@ export class Orchestrator {
                         .describe(
                             "True for background monitors that should only interrupt the user when the report actually matters. Default false.",
                         ),
+                    runDays: z
+                        .array(z.string())
+                        .optional()
+                        .describe(
+                            "Days it may run, e.g. ['mon','tue','wed','thu','fri'] for weekdays only. Omit for every day. Set this instead of writing 'if today is Saturday, say NOTHING TO REPORT' into the brief: a watcher barred by this property does not spawn an agent at all.",
+                        ),
+                    skipOnLeave: z
+                        .boolean()
+                        .optional()
+                        .describe(
+                            "True to stay silent while the user is on leave, using the recorded leave dates. Prefer this over putting the dates in the brief, where they go stale unnoticed.",
+                        ),
                 }),
                 handler: async (input) => this.createSchedule(input),
             }),
@@ -648,6 +673,7 @@ export class Orchestrator {
                             scheduleId: schedule.id,
                             title: schedule.title,
                             cadence: describeSchedule(schedule),
+                            silence: describeSuppression(schedule) || undefined,
                             enabled: schedule.enabled,
                             archived: isArchived(schedule),
                             runCount: schedule.runCount,
@@ -690,6 +716,18 @@ export class Orchestrator {
                         .optional()
                         .describe(
                             "True retires the watcher: it keeps its run history and last report but drops out of the list and never runs again. Use this instead of cancelling when the user is only tidying up. False brings it back.",
+                        ),
+                    runDays: z
+                        .array(z.string())
+                        .optional()
+                        .describe(
+                            "Days it may run, e.g. ['mon','tue','wed','thu','fri'] for weekdays only. Omit for every day. Set this instead of writing 'if today is Saturday, say NOTHING TO REPORT' into the brief: a watcher barred by this property does not spawn an agent at all.",
+                        ),
+                    skipOnLeave: z
+                        .boolean()
+                        .optional()
+                        .describe(
+                            "True to stay silent while the user is on leave, using the recorded leave dates. Prefer this over putting the dates in the brief, where they go stale unnoticed.",
                         ),
                 }),
                 handler: async (input) => this.updateSchedule(input),
@@ -860,6 +898,49 @@ export class Orchestrator {
                 }),
                 handler: async ({ proposalId, status, note, branch, commit, supersededBy }) =>
                     this.updateProposal(proposalId, status, { note, branch, commit, supersededBy }),
+            }),
+
+            defineTool("mochi_set_leave", {
+                description:
+                    "Record a stretch the user is away — annual leave, a holiday, an offsite. Watchers marked skipOnLeave go quiet for those days automatically, so the dates are stated once here rather than pasted into every brief that cares. Use it whenever the user mentions being off between two dates.",
+                skipPermission: true,
+                parameters: z.object({
+                    from: z.string().describe("First day away, local calendar date like '2026-08-21'."),
+                    to: z.string().describe("Last day away, inclusive, e.g. '2026-09-07'."),
+                    note: z.string().optional().describe("Why, in a few words."),
+                }),
+                handler: async ({ from, to, note }) => this.setLeave(from, to, note),
+            }),
+
+            defineTool("mochi_list_leave", {
+                description:
+                    "List the leave periods on record, and say whether the user is away right now. Worth checking before telling him a watcher has gone quiet.",
+                skipPermission: true,
+                parameters: z.object({}),
+                handler: async () => {
+                    const current = onLeave(this.leave, Date.now());
+                    return {
+                        away: current !== undefined,
+                        leave: this.leave.map((period) => ({
+                            leaveId: period.id,
+                            from: period.from,
+                            to: period.to,
+                            note: period.note,
+                            current: period.id === current?.id,
+                        })),
+                    };
+                },
+            }),
+
+            defineTool("mochi_clear_leave", {
+                description:
+                    "Remove a recorded leave period — the trip was cancelled, or the dates were wrong. Watchers that were sleeping through it wake back up.",
+                skipPermission: true,
+                parameters: z.object({ leaveId: z.string() }),
+                handler: async ({ leaveId }) => {
+                    const ok = this.clearLeave(leaveId);
+                    return ok ? { ok: true } : { error: "No leave period with that id." };
+                },
             }),
         ];
     }
@@ -1222,7 +1303,7 @@ export class Orchestrator {
 
                 const rescheduled = nothingToReport ? noteQuietRun(target) : clearBackoff(target);
                 if (rescheduled && isRunnable(target) && target.cadence.kind === "interval") {
-                    target.nextRunAt = nextRunFor(target);
+                    target.nextRunAt = nextAllowedRunFor(target, state.leave);
                 }
             });
             this.persistSchedules();
@@ -1390,7 +1471,11 @@ export class Orchestrator {
         dailyAt?: string;
         onceInMinutes?: number;
         quiet?: boolean;
+        runDays?: string[];
+        skipOnLeave?: boolean;
     }): Record<string, unknown> {
+        const runDays = parseRunDays(input.runDays);
+        if (runDays instanceof Error) return { error: runDays.message };
         let cadence: Cadence;
         if (input.dailyAt) {
             cadence = { kind: "daily", time: input.dailyAt };
@@ -1407,7 +1492,11 @@ export class Orchestrator {
             task: input.task,
             cadence,
             quiet: input.quiet,
+            runDays,
+            skipOnLeave: input.skipOnLeave,
         });
+        // A watcher barred from running today should not claim it will.
+        schedule.nextRunAt = nextAllowedRunFor(schedule, this.leave);
 
         this.store.update((state) => {
             state.schedules.push(schedule);
@@ -1441,6 +1530,8 @@ export class Orchestrator {
         quiet?: boolean;
         enabled?: boolean;
         archived?: boolean;
+        runDays?: string[];
+        skipOnLeave?: boolean;
     }): Record<string, unknown> {
         const existing = this.store.get().schedules.find((s) => s.id === input.scheduleId);
         if (!existing) return { error: "No watcher with that id." };
@@ -1448,6 +1539,9 @@ export class Orchestrator {
         if (input.everyMinutes !== undefined && input.dailyAt !== undefined) {
             return { error: "Pick one of everyMinutes or dailyAt, not both." };
         }
+
+        const runDays = parseRunDays(input.runDays);
+        if (runDays instanceof Error) return { error: runDays.message };
 
         let cadence: Cadence | undefined;
         if (input.dailyAt !== undefined) {
@@ -1469,6 +1563,15 @@ export class Orchestrator {
             if (input.task !== undefined) target.task = input.task;
             if (input.quiet !== undefined) target.quiet = input.quiet;
             if (input.enabled !== undefined) target.enabled = input.enabled;
+            if (runDays !== undefined) {
+                // An empty list means "no day restriction", not "never run".
+                target.runDays = runDays.length === 7 || runDays.length === 0 ? undefined : runDays;
+            }
+            if (input.skipOnLeave !== undefined) target.skipOnLeave = input.skipOnLeave;
+            // Set by hand now, so the prose migration must never touch it.
+            if (runDays !== undefined || input.skipOnLeave !== undefined) {
+                target.suppressionDerived = true;
+            }
             if (input.archived !== undefined) {
                 target.archived = input.archived;
                 target.archivedAt = input.archived ? Date.now() : undefined;
@@ -1485,8 +1588,12 @@ export class Orchestrator {
             // clock restarted; everything else leaves the next tick alone.
             // A one-off that has already gone off is never restarted: its one
             // moment is spent, whatever flags get flipped afterwards.
-            if ((cadence || input.enabled === true || input.archived === false) && isRunnable(target)) {
-                target.nextRunAt = nextRunFor(target);
+            const silenceChanged = runDays !== undefined || input.skipOnLeave !== undefined;
+            if (
+                (cadence || silenceChanged || input.enabled === true || input.archived === false) &&
+                isRunnable(target)
+            ) {
+                target.nextRunAt = nextAllowedRunFor(target, state.leave);
             }
         });
         this.persistSchedules();
@@ -1509,6 +1616,7 @@ export class Orchestrator {
             enabled: updated.enabled,
             archived: isArchived(updated),
             quiet: updated.quiet,
+            silence: describeSuppression(updated) || undefined,
             runCount: updated.runCount,
             nextRun: isRunnable(updated) ? new Date(updated.nextRunAt).toLocaleString() : undefined,
             lastResult: updated.lastResult ? clip(updated.lastResult, 200) : undefined,
@@ -1531,7 +1639,7 @@ export class Orchestrator {
             const schedule = state.schedules.find((s) => s.id === scheduleId);
             if (!schedule) return;
             schedule.enabled = enabled;
-            if (isRunnable(schedule)) schedule.nextRunAt = nextRunFor(schedule);
+            if (isRunnable(schedule)) schedule.nextRunAt = nextAllowedRunFor(schedule, state.leave);
         });
         this.persistSchedules();
         this.store.flush();
@@ -1549,7 +1657,7 @@ export class Orchestrator {
             schedule.archived = archived;
             schedule.archivedAt = archived ? Date.now() : undefined;
             if (archived) schedule.enabled = false;
-            if (isRunnable(schedule)) schedule.nextRunAt = nextRunFor(schedule);
+            if (isRunnable(schedule)) schedule.nextRunAt = nextAllowedRunFor(schedule, state.leave);
         });
         this.persistSchedules();
         this.store.flush();
@@ -1597,7 +1705,7 @@ export class Orchestrator {
                 target.enabled = false;
                 target.nextRunAt = target.lastRunAt;
             } else {
-                target.nextRunAt = nextRunFor(target);
+                target.nextRunAt = nextAllowedRunFor(target, state.leave);
             }
         });
         this.persistSchedules();
@@ -1627,6 +1735,7 @@ export class Orchestrator {
         for (const schedule of this.store.get().schedules) {
             if (!isRunnable(schedule)) continue;
             if (schedule.nextRunAt > now && schedule.cadence.kind !== "daily") continue;
+            if (this.skipSuppressed(schedule, now)) continue;
             if (schedule.cadence.kind === "once") {
                 if (schedule.nextRunAt <= now) due.push({ id: schedule.id });
                 continue;
@@ -1666,6 +1775,7 @@ export class Orchestrator {
         const now = Date.now();
         for (const schedule of this.store.get().schedules) {
             if (!isRunnable(schedule) || schedule.nextRunAt > now) continue;
+            if (this.skipSuppressed(schedule, now)) continue;
             if (schedule.cadence.kind === "daily") {
                 const decision = catchUpDecision(schedule, now);
                 const slot = decision.slotAt;
@@ -1690,6 +1800,146 @@ export class Orchestrator {
 
     private persistSchedules(): void {
         this.disk.saveSchedules(this.store.get().schedules);
+    }
+
+    // MARK: - Silence rules
+
+    /** Leave periods currently on record. */
+    private get leave(): LeavePeriod[] {
+        return this.store.get().leave;
+    }
+
+    /**
+     * Is this watcher barred from running right now — and if so, move it on.
+     *
+     * Checked here rather than inside `runSchedule` so that only the *clock* is
+     * bound by the rules. When the user asks for a watcher by hand on a Sunday
+     * they want it to run; the rule exists to stop unattended agents spending
+     * his tokens on a day he is not reading them.
+     *
+     * A skipped run is not a quiet run: back-off measures how interesting a
+     * watcher is, and letting a fortnight of leave double its interval would
+     * punish it for the user's holiday.
+     */
+    private skipSuppressed(schedule: Schedule, now: number): boolean {
+        const blocked = suppressionAt(schedule, this.leave, now);
+        if (!blocked) return false;
+
+        const nextRunAt = nextAllowedRunFor(schedule, this.leave, now);
+        if (nextRunAt !== schedule.nextRunAt) {
+            this.store.update((state) => {
+                const target = state.schedules.find((s) => s.id === schedule.id);
+                if (target) target.nextRunAt = nextRunAt;
+            });
+            this.persistSchedules();
+        }
+        this.log({
+            kind: "schedule.skipped",
+            title: schedule.title,
+            detail: blocked.detail,
+            scheduleId: schedule.id,
+        });
+        return true;
+    }
+
+    /**
+     * Read the silence rules out of briefs that predate them being a property.
+     *
+     * Runs once per schedule, ever. Without this the feature ships inert: the
+     * four watchers that motivated it would keep enforcing weekends in prose,
+     * still spawning an agent each morning to be told it is Saturday. Any leave
+     * dates found in the prose are lifted out too, so deleting the paragraph
+     * later does not quietly delete the dates with it.
+     */
+    private migrateSuppression(): void {
+        const derivedFor = new Map<string, ReturnType<typeof deriveSuppression>>();
+        for (const schedule of this.store.get().schedules) {
+            if (schedule.suppressionDerived) continue;
+            derivedFor.set(schedule.id, deriveSuppression(schedule.task));
+        }
+        if (derivedFor.size === 0) return;
+
+        const added: LeavePeriod[] = [];
+        this.store.update((state) => {
+            for (const schedule of state.schedules) {
+                const derived = derivedFor.get(schedule.id);
+                if (!derived) continue;
+                schedule.suppressionDerived = true;
+                // Never overwrite a rule already set by hand: the property is
+                // the user's statement of intent, the prose is only a guess at it.
+                if (derived.runDays && schedule.runDays === undefined) schedule.runDays = derived.runDays;
+                if (derived.skipOnLeave && schedule.skipOnLeave === undefined) schedule.skipOnLeave = true;
+                if (!derived.leave) continue;
+                const known = [...state.leave, ...added].some(
+                    (period) => period.from === derived.leave!.from && period.to === derived.leave!.to,
+                );
+                if (!known) {
+                    added.push(
+                        makeLeavePeriod(derived.leave.from, derived.leave.to, "read from a watcher's brief"),
+                    );
+                }
+            }
+            state.leave = [...state.leave, ...added];
+        });
+
+        this.persistSchedules();
+        if (added.length > 0) this.disk.saveLeave(this.store.get().leave);
+
+        const changed = this.store
+            .get()
+            .schedules.filter((schedule) => derivedFor.get(schedule.id) && describeSuppression(schedule));
+        if (changed.length === 0) return;
+        this.log({
+            kind: "schedule.updated",
+            title: "Silence rules",
+            detail: changed
+                .map((schedule) => `${schedule.title}: ${describeSuppression(schedule)}`)
+                .join("; "),
+        });
+    }
+
+    /** Record a stretch the user is away. Returns the period, or an error. */
+    setLeave(from: string, to: string, note?: string): Record<string, unknown> {
+        if (!isDayKey(from) || !isDayKey(to)) {
+            return { error: "Dates must be local calendar days like '2026-08-21'." };
+        }
+        const period = makeLeavePeriod(from, to, note);
+        this.store.update((state) => {
+            state.leave = [...state.leave, period];
+        });
+        this.disk.saveLeave(this.leave);
+        this.rescheduleForLeave();
+        this.store.flush();
+        return { leaveId: period.id, from: period.from, to: period.to, note: period.note };
+    }
+
+    /** Drop a recorded leave period. */
+    clearLeave(leaveId: string): boolean {
+        const existed = this.leave.some((period) => period.id === leaveId);
+        if (!existed) return false;
+        this.store.update((state) => {
+            state.leave = state.leave.filter((period) => period.id !== leaveId);
+        });
+        this.disk.saveLeave(this.leave);
+        this.rescheduleForLeave();
+        this.store.flush();
+        return true;
+    }
+
+    /**
+     * Leave just moved, so every watcher that cares needs its clock redone —
+     * both the ones now sleeping through it and the ones that were sleeping
+     * through a period that has just been deleted.
+     */
+    private rescheduleForLeave(): void {
+        const now = Date.now();
+        this.store.update((state) => {
+            for (const schedule of state.schedules) {
+                if (!schedule.skipOnLeave || !isRunnable(schedule)) continue;
+                schedule.nextRunAt = nextAllowedRunFor(schedule, state.leave, now);
+            }
+        });
+        this.persistSchedules();
     }
 
     // MARK: - Meeting heads-ups

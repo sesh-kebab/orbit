@@ -1,0 +1,388 @@
+/**
+ * Verification for schedule silence rules — whether a watcher is allowed to run
+ * at all today, which used to be a paragraph of prose in each watcher's brief.
+ *
+ *   npm run verify:suppression
+ *
+ * Everything under test is pure, so this needs no clock, no calendar and no
+ * agent. Dates are built with the local-time constructor on purpose: the rules
+ * are about the user's week, not UTC's.
+ */
+import { dailySlotOn, makeSchedule, nextAllowedRunFor } from "../src/main/orchestrator/schedules.js";
+import {
+    dayKey,
+    deriveSuppression,
+    describeDays,
+    describeSuppression,
+    isDayKey,
+    makeLeavePeriod,
+    nextAllowedRun,
+    onLeave,
+    parseRunDays,
+    startOfNextDay,
+    suppressionAt,
+    WEEKDAYS,
+} from "../src/main/orchestrator/suppression.js";
+import type { LeavePeriod, Schedule } from "../src/shared/types.js";
+
+let passed = 0;
+const failures: string[] = [];
+
+function check(name: string, condition: boolean, detail?: unknown): void {
+    if (condition) {
+        passed += 1;
+        return;
+    }
+    failures.push(`${name}${detail === undefined ? "" : ` — ${JSON.stringify(detail)}`}`);
+}
+
+/** August 2026: the 15th is a Saturday, the 16th a Sunday, the 17th a Monday. */
+function at(day: number, hour = 9, minute = 0): number {
+    return new Date(2026, 7, day, hour, minute, 0, 0).getTime();
+}
+const SAT = at(15);
+const SUN = at(16);
+const MON = at(17);
+
+const NO_LEAVE: LeavePeriod[] = [];
+const LEAVE = [makeLeavePeriod("2026-08-21", "2026-09-07", "annual leave")];
+
+// MARK: - Day maths
+
+check("saturday is day 6", new Date(SAT).getDay() === 6);
+check("sunday is day 0", new Date(SUN).getDay() === 0);
+check("monday is day 1", new Date(MON).getDay() === 1);
+check("dayKey is local, not UTC", dayKey(at(15, 23, 30)) === "2026-08-15", dayKey(at(15, 23, 30)));
+check("dayKey at midnight", dayKey(at(15, 0, 0)) === "2026-08-15");
+
+const rolled = startOfNextDay(at(15, 23, 30));
+check("startOfNextDay is the next local midnight", new Date(rolled).getHours() === 0 && dayKey(rolled) === "2026-08-16", {
+    rolled: new Date(rolled).toString(),
+});
+
+check("isDayKey accepts a real date", isDayKey("2026-08-21"));
+check("isDayKey rejects month 13", !isDayKey("2026-13-01"));
+check("isDayKey rejects 31 September", !isDayKey("2026-09-31"));
+check("isDayKey rejects free text", !isDayKey("next friday"));
+
+// MARK: - describeDays and parseRunDays
+
+check("weekdays describe as a range", describeDays(WEEKDAYS) === "mon-fri", describeDays(WEEKDAYS));
+check("all seven describe as every day", describeDays([0, 1, 2, 3, 4, 5, 6]) === "every day");
+check("a gap is listed out", describeDays([1, 5]) === "mon, fri", describeDays([1, 5]));
+check("out of order input still sorts", describeDays([5, 1, 3, 2, 4]) === "mon-fri");
+
+const parsed = parseRunDays(["mon", "Tue", "WEDNESDAY", "thu", "fri"]);
+check(
+    "parseRunDays takes names, cases and long forms",
+    !(parsed instanceof Error) && String(parsed) === "1,2,3,4,5",
+    parsed,
+);
+check("parseRunDays dedupes", String(parseRunDays(["mon", "mon"])) === "1");
+check("parseRunDays rejects a typo rather than ignoring it", parseRunDays(["mnoday"]) instanceof Error);
+check("parseRunDays passes undefined through", parseRunDays(undefined) === undefined);
+
+// MARK: - Leave
+
+check("inside leave", onLeave(LEAVE, at(25))?.note === "annual leave");
+check("first day of leave counts", onLeave(LEAVE, at(21, 8, 0)) !== undefined);
+check("last day of leave counts", onLeave(LEAVE, new Date(2026, 8, 7, 23, 0).getTime()) !== undefined);
+check("day after leave does not", onLeave(LEAVE, new Date(2026, 8, 8, 0, 1).getTime()) === undefined);
+check("day before leave does not", onLeave(LEAVE, at(20, 23, 59)) === undefined);
+check("no leave on record", onLeave(NO_LEAVE, at(25)) === undefined);
+check(
+    "a period stored back to front still matches",
+    onLeave([{ id: "x", from: "2026-09-07", to: "2026-08-21" }], at(25)) !== undefined,
+);
+
+// MARK: - suppressionAt
+
+const weekdayOnly = { runDays: WEEKDAYS, skipOnLeave: true };
+const everyDay = { runDays: undefined, skipOnLeave: false };
+const weekdayNoLeaveRule = { runDays: WEEKDAYS, skipOnLeave: false };
+/** The daily briefing: silent on Saturday, but Sunday is a judgement call it keeps. */
+const briefing = { runDays: [0, 1, 2, 3, 4, 5], skipOnLeave: true };
+
+check("weekday watcher is suppressed on Saturday", suppressionAt(weekdayOnly, NO_LEAVE, SAT)?.reason === "day");
+check("weekday watcher is suppressed on Sunday", suppressionAt(weekdayOnly, NO_LEAVE, SUN)?.reason === "day");
+check("weekday watcher runs on Monday", suppressionAt(weekdayOnly, NO_LEAVE, MON) === undefined);
+check("unrestricted watcher runs on Saturday", suppressionAt(everyDay, LEAVE, SAT) === undefined);
+check("briefing is suppressed on Saturday", suppressionAt(briefing, NO_LEAVE, SAT)?.reason === "day");
+check("briefing still runs on Sunday", suppressionAt(briefing, NO_LEAVE, SUN) === undefined);
+
+check("leave suppresses a weekday", suppressionAt(weekdayOnly, LEAVE, at(25))?.reason === "leave");
+check(
+    "leave is ignored by a watcher that did not opt in",
+    suppressionAt(weekdayNoLeaveRule, LEAVE, at(25)) === undefined,
+);
+check(
+    "the more specific reason wins on a weekend inside leave",
+    suppressionAt(weekdayOnly, LEAVE, at(22))?.reason === "day",
+    suppressionAt(weekdayOnly, LEAVE, at(22)),
+);
+check(
+    "an empty day list is not a ban",
+    suppressionAt({ runDays: [], skipOnLeave: false }, NO_LEAVE, SAT) === undefined,
+);
+
+check("describeSuppression reads plainly", describeSuppression(weekdayOnly) === "mon-fri, not on leave");
+check("no rules describe as nothing", describeSuppression(everyDay) === "");
+
+// MARK: - nextAllowedRun
+
+const slotAt = (dayStart: number) => dailySlotOn({ kind: "daily", time: "08:00" }, dayStart)!;
+
+const fromSaturday = nextAllowedRun(weekdayOnly, NO_LEAVE, at(15, 8, 0), slotAt);
+check(
+    "a weekday watcher skipping the weekend lands on Monday at its own slot",
+    dayKey(fromSaturday) === "2026-08-17" && new Date(fromSaturday).getHours() === 8,
+    new Date(fromSaturday).toString(),
+);
+
+const fromLeave = nextAllowedRun(weekdayOnly, LEAVE, at(21, 8, 0), slotAt);
+check(
+    "eighteen days of leave are cleared in one go, to the first working day after",
+    dayKey(fromLeave) === "2026-09-08",
+    new Date(fromLeave).toString(),
+);
+check("and it keeps its slot on the far side", new Date(fromLeave).getHours() === 8);
+
+check("an allowed candidate is returned untouched", nextAllowedRun(weekdayOnly, NO_LEAVE, MON, slotAt) === MON);
+
+const interval = nextAllowedRun(weekdayOnly, NO_LEAVE, at(15, 14, 30));
+check(
+    "an interval watcher with no slot resumes at midnight on the next allowed day",
+    dayKey(interval) === "2026-08-17" && new Date(interval).getHours() === 0,
+    new Date(interval).toString(),
+);
+
+// MARK: - nextAllowedRunFor, on real schedules
+
+function scheduleWith(
+    cadence: Schedule["cadence"],
+    rules: { runDays?: number[]; skipOnLeave?: boolean },
+): Schedule {
+    return makeSchedule({ title: "t", task: "t", cadence, ...rules });
+}
+
+const dailyBrief = scheduleWith({ kind: "daily", time: "08:00" }, { runDays: WEEKDAYS, skipOnLeave: true });
+const afterFriday = nextAllowedRunFor(dailyBrief, NO_LEAVE, at(14, 9, 0));
+check(
+    "Friday morning's briefing next runs Monday, not Saturday",
+    dayKey(afterFriday) === "2026-08-17" && new Date(afterFriday).getHours() === 8,
+    new Date(afterFriday).toString(),
+);
+
+const unrestricted = scheduleWith({ kind: "daily", time: "08:00" }, {});
+check(
+    "a watcher with no rules is unaffected",
+    dayKey(nextAllowedRunFor(unrestricted, LEAVE, at(14, 9, 0))) === "2026-08-15",
+);
+
+const poller = scheduleWith({ kind: "interval", minutes: 45 }, { runDays: WEEKDAYS, skipOnLeave: true });
+check(
+    "a 45 minute poller mid-morning on a weekday just takes its next slot",
+    nextAllowedRunFor(poller, NO_LEAVE, MON) === MON + 45 * 60_000,
+);
+
+// MARK: - Reading the rules back out of the old prose
+
+/**
+ * The four briefs already on disk, structurally verbatim with the names, address
+ * and subject matter replaced. The parsing surface — numbered silence checks,
+ * "respond with exactly", the conditional Sunday, the leave sentence — is what
+ * matters here, and it is reproduced exactly.
+ */
+const LUNCH_BRIEF = `Weekday-only lunch window reminder for the user.
+
+FIRST: check today's day of the week. If it is Saturday or Sunday, respond with exactly: NOTHING TO REPORT
+Do not report on weekends under any circumstances, even if the calendar is interesting.
+
+Also check his calendar for a full-day out-of-office or annual leave entry covering today. If he is on leave today, respond with exactly: NOTHING TO REPORT
+Note: he is on leave from 2026-08-21 returning around 2026-09-08, so stay silent throughout that period.
+
+OTHERWISE, on a normal working weekday, report the largest genuinely free gap between 11:00 and 14:30.`;
+
+const lunch = deriveSuppression(LUNCH_BRIEF);
+check("lunch: weekends come out", String(lunch.runDays) === "1,2,3,4,5", lunch.runDays);
+check("lunch: leave comes out", lunch.skipOnLeave === true);
+check(
+    "lunch: the dates come out",
+    lunch.leave?.from === "2026-08-21" && lunch.leave?.to === "2026-09-07",
+    lunch.leave,
+);
+
+const BRIEFING = `Morning chief-of-staff briefing for the user.
+
+FIRST, SILENCE CHECKS:
+1. If today is Saturday, respond with exactly: NOTHING TO REPORT.
+2. If today is Sunday, only report if there is something genuinely time-critical for the week ahead, for example an empty sprint starting Monday. Otherwise respond with exactly: NOTHING TO REPORT. Keep any Sunday report to three lines.
+3. If he is on out-of-office or annual leave today, respond with exactly: NOTHING TO REPORT. He is on leave from 2026-08-21 returning around 2026-09-08, so stay silent for that whole period.
+
+OTHERWISE, on a working weekday, prepare a decision-first briefing.`;
+
+const brief = deriveSuppression(BRIEFING);
+check(
+    "briefing: Saturday is dropped but Sunday is kept, because Sunday is conditional",
+    String(brief.runDays) === "0,1,2,3,4,5",
+    brief.runDays,
+);
+check("briefing: leave comes out", brief.skipOnLeave === true);
+check("briefing: the dates come out", brief.leave?.from === "2026-08-21", brief.leave);
+
+/**
+ * The same rules as one long unbroken paragraph, which is how the briefing is
+ * actually stored — the numbered items are run together rather than on their
+ * own lines, and the parser has to find the same boundaries either way.
+ */
+const BRIEFING_ONE_LINE =
+    "Morning chief-of-staff briefing for the user. FIRST, SILENCE CHECKS: 1. If today is Saturday, respond with exactly: NOTHING TO REPORT. 2. If today is Sunday, only report if there is something genuinely time-critical for the week ahead, for example an empty sprint starting Monday. Otherwise respond with exactly: NOTHING TO REPORT. Keep any Sunday report to three lines. 3. If he is on out-of-office or annual leave today, respond with exactly: NOTHING TO REPORT. He is on leave from 2026-08-21 returning around 2026-09-08, so stay silent for that whole period. OTHERWISE, on a working weekday, prepare a decision-first briefing.";
+
+const oneLine = deriveSuppression(BRIEFING_ONE_LINE);
+check(
+    "briefing as one paragraph reads exactly the same",
+    String(oneLine.runDays) === "0,1,2,3,4,5" && oneLine.skipOnLeave === true,
+    oneLine,
+);
+check(
+    "and the trailing 'keep any Sunday report short' does not silence Sundays",
+    oneLine.runDays?.includes(0) === true,
+    oneLine.runDays,
+);
+check("one paragraph still yields the leave dates", oneLine.leave?.from === "2026-08-21", oneLine.leave);
+
+const WRAP_UP = `End-of-day wrap-up for the user.
+
+FIRST, TWO SILENCE CHECKS:
+1. If today is Saturday or Sunday, respond with exactly: NOTHING TO REPORT. No weekend wrap-ups, ever, even if something did happen.
+2. If he is on out-of-office or annual leave today, respond with exactly: NOTHING TO REPORT. He is on leave from 2026-08-21 returning around 2026-09-08.
+
+OTHERWISE, review the working day.`;
+
+const wrap = deriveSuppression(WRAP_UP);
+check("wrap-up: weekends come out", String(wrap.runDays) === "1,2,3,4,5", wrap.runDays);
+check("wrap-up: leave comes out", wrap.skipOnLeave === true);
+
+/** The one added by hand on 16 August, and the reason this shipped at all. */
+const TRACKER = `Track the two unresolved items the user owns from the 13 August 2026 architecture meeting.
+
+FIRST, SILENCE CHECKS:
+1. If today is Saturday or Sunday, respond with exactly: NOTHING TO REPORT.
+2. If he is on out-of-office or annual leave today, respond with exactly: NOTHING TO REPORT. He is on leave from 2026-08-21 returning around 2026-09-08, so stay silent for that whole period.
+
+THE TWO ITEMS:
+1. The call path and latency budget. Current state as of 2026-08-15: still open with no owner.
+2. Sensitive queries. Still no owner and no policy.
+
+REPORT ONLY IF SOMETHING ACTUALLY CHANGED. If nothing has changed, respond with exactly: NOTHING TO REPORT. Do not restate the unchanged baseline.`;
+
+const tracker = deriveSuppression(TRACKER);
+check("tracker: weekends come out", String(tracker.runDays) === "1,2,3,4,5", tracker.runDays);
+check("tracker: leave comes out", tracker.skipOnLeave === true);
+check(
+    "tracker: the leave dates win over the other dates scattered through the brief",
+    tracker.leave?.from === "2026-08-21" && tracker.leave?.to === "2026-09-07",
+    tracker.leave,
+);
+
+// The failure that matters most: inventing a rule that was never written.
+const PLAIN = `Check the build queue every hour and report any red builds with the failing step.
+If everything is green, respond with exactly: NOTHING TO REPORT.`;
+const plain = deriveSuppression(PLAIN);
+check(
+    "a brief with no silence rules yields none",
+    plain.runDays === undefined && plain.skipOnLeave === undefined,
+    plain,
+);
+
+const MENTIONS_SATURDAY = `Summarise weekend deployment risk. Saturday releases need extra care.
+
+Separately: if there are no releases queued, respond with exactly: NOTHING TO REPORT.`;
+check(
+    "a day named in a sentence of its own, far from any silence instruction, is still read carefully",
+    deriveSuppression(MENTIONS_SATURDAY).skipOnLeave === undefined,
+    deriveSuppression(MENTIONS_SATURDAY),
+);
+
+const CONDITIONAL_WEEKEND = `Watch the incident channel.
+At weekends, only report if there is a live sev 2. Otherwise respond with exactly: NOTHING TO REPORT.`;
+check(
+    "a conditional weekend rule is left alone",
+    deriveSuppression(CONDITIONAL_WEEKEND).runDays === undefined,
+    deriveSuppression(CONDITIONAL_WEEKEND),
+);
+
+const RETURNING_BRIEF = `Stay quiet while he is away. If he is on leave today, respond with exactly: NOTHING TO REPORT.
+He is on leave from 2026-08-21 returning around 2026-09-08.`;
+const returning = deriveSuppression(RETURNING_BRIEF);
+check(
+    "'returning around' names the first day back, so leave ends the day before",
+    returning.leave?.to === "2026-09-07",
+    returning.leave,
+);
+check("and the first day away is unchanged", returning.leave?.from === "2026-08-21");
+
+const THROUGH_BRIEF = `If he is on annual leave today, respond with exactly: NOTHING TO REPORT.
+He is on leave from 2026-08-21 to 2026-09-07 inclusive.`;
+check(
+    "a plain 'to' range keeps both ends",
+    deriveSuppression(THROUGH_BRIEF).leave?.to === "2026-09-07",
+    deriveSuppression(THROUGH_BRIEF).leave,
+);
+
+const NO_DATES = `Stay quiet if he is on annual leave: respond with exactly: NOTHING TO REPORT.`;
+const noDates = deriveSuppression(NO_DATES);
+check("leave with no dates still sets the flag", noDates.skipOnLeave === true);
+check("but invents no period", noDates.leave === undefined, noDates.leave);
+
+// MARK: - What it costs, replayed over a real fortnight
+
+/**
+ * The honest measure: how many times each watcher actually spawns an agent
+ * between Saturday 15 August and Tuesday 8 September, a stretch containing two
+ * full weekends and the eighteen day leave. Before this change every daily
+ * watcher fired on all 25 days and paid an agent to read its own prose and then
+ * say nothing.
+ */
+function countRuns(schedule: Schedule, leave: LeavePeriod[]): number {
+    let runs = 0;
+    for (let day = 15; day <= 39; day += 1) {
+        const when = new Date(2026, 7, day, 8, 0, 0, 0).getTime();
+        if (!suppressionAt(schedule, leave, when)) runs += 1;
+    }
+    return runs;
+}
+
+const DAYS = 25;
+const lunchSchedule = scheduleWith({ kind: "daily", time: "11:15" }, { runDays: WEEKDAYS, skipOnLeave: true });
+const briefingSchedule = scheduleWith(
+    { kind: "daily", time: "08:00" },
+    { runDays: [0, 1, 2, 3, 4, 5], skipOnLeave: true },
+);
+
+const lunchRuns = countRuns(lunchSchedule, LEAVE);
+const briefingRuns = countRuns(briefingSchedule, LEAVE);
+const unrestrictedRuns = countRuns(unrestricted, LEAVE);
+
+check("an unrestricted watcher still runs every day", unrestrictedRuns === DAYS, unrestrictedRuns);
+check("the weekday watcher drops to the five working days outside leave", lunchRuns === 5, lunchRuns);
+check("the briefing keeps its Sundays, so runs a little more", briefingRuns > lunchRuns && briefingRuns < DAYS, {
+    briefingRuns,
+    lunchRuns,
+});
+
+const saved = (DAYS - lunchRuns) * 3 + (DAYS - briefingRuns);
+check("the four live watchers save sixty-odd pointless agent runs over the stretch", saved > 60, { saved });
+
+console.log(`\nOver 25 days: unrestricted ${unrestrictedRuns}, weekday-only ${lunchRuns}, briefing ${briefingRuns}.`);
+console.log(`Agent runs avoided across the four live watchers: ${saved}.`);
+
+// MARK: - Report
+
+console.log(`\n${passed} checks passed.`);
+if (failures.length > 0) {
+    console.error(`${failures.length} failed:`);
+    for (const failure of failures) console.error(`  ✗ ${failure}`);
+    process.exit(1);
+}
+console.log("Silence rules verified.\n");
