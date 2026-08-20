@@ -74,6 +74,7 @@ import {
     parseRunDays,
     suppressionAt,
 } from "./suppression.js";
+import type { Freshness } from "../freshness.js";
 
 /** Distinguishes 'not installed' from a runtime that started and then failed. */
 class MissingCliError extends Error {}
@@ -144,6 +145,11 @@ export class Orchestrator {
     onSoftRestart: (() => void) | undefined;
     /** Guards against a second restart being queued while one is pending. */
     private restarting = false;
+    /**
+     * Whether the running code matches the written code. Supplied by the main
+     * process, which is the only part that knows where the repo is on disk.
+     */
+    freshness: Freshness | undefined;
 
     constructor(
         private readonly store: Store,
@@ -164,6 +170,7 @@ export class Orchestrator {
             state.personaPath = this.disk.personaPath;
         });
         this.migrateSuppression();
+        this.reconcileFreshness();
 
         // Must happen before the session is created: the restored transcript is
         // folded into the system message so the model comes back with context.
@@ -350,6 +357,9 @@ export class Orchestrator {
 
         const evolution = this.evolutionDigest();
         if (evolution) parts.push(evolution);
+
+        const freshness = this.freshnessBlock();
+        if (freshness) parts.push(freshness);
 
         parts.push(
             `<environment>\nWorkspace: ${state.settings.workspace}\nLocal time: ${new Date().toLocaleString()}\n</environment>`,
@@ -2266,6 +2276,60 @@ export class Orchestrator {
 
     private persistOpenItems(): void {
         this.disk.saveOpenItems(this.store.get().openItems);
+    }
+
+    // MARK: - Running build
+
+    /** Marks the one open item this check owns, so it can find it again. */
+    private static readonly FRESHNESS_TAG = "[running build]";
+
+    /**
+     * Tell the model what it is actually running.
+     *
+     * Without this Orbit answers "is X working?" from the source it can read
+     * rather than the binary it is, which is how a shipped-and-merged feature
+     * got reported as a regression on 17 August. Stated plainly and near the end
+     * of the prompt so it is hard to miss.
+     */
+    private freshnessBlock(): string | undefined {
+        const freshness = this.freshness;
+        if (!freshness?.summary) return undefined;
+        return [
+            "<running_build>",
+            freshness.summary,
+            "",
+            "You are not running the code currently on disk. Before claiming any recent",
+            "change works, or diagnosing a feature as broken, say so: the likeliest",
+            "explanation for 'this used to work' is this, not a regression. Offer to",
+            "rebuild and restart.",
+            "</running_build>",
+        ].join("\n");
+    }
+
+    /**
+     * Keep exactly one open item in step with reality.
+     *
+     * Raised when the running build falls behind and resolved by the same code
+     * once a restart has caught it up, so the reminder cannot outlive the
+     * problem and nobody has to remember to close it. Tagged rather than matched
+     * on the whole message because the wording carries an age that changes every
+     * time it is measured.
+     */
+    private reconcileFreshness(): void {
+        const tag = Orchestrator.FRESHNESS_TAG;
+        const existing = this.store
+            .get()
+            .openItems.find((item) => !item.resolved && item.text.startsWith(tag));
+
+        const summary = this.freshness?.summary;
+        if (!summary) {
+            if (existing) this.resolveOpenItem(existing.id, "The running build caught up.");
+            return;
+        }
+        // Already asked. Re-raising on every launch would nag with a number that
+        // only grows, which is the behaviour open items exist to avoid.
+        if (existing) return;
+        this.raiseOpenItem(`${tag} ${summary}`, "freshness check");
     }
 
     // MARK: - Evolution
