@@ -11,6 +11,7 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
+    ActivityEntry,
     ChatMessage,
     HistoryEntry,
     MemoryNote,
@@ -20,6 +21,7 @@ import type {
     UsageTotals,
     WindowBounds,
 } from "../shared/types.js";
+import { readActivityLedger, writeActivityLedger } from "./activity.js";
 
 const HISTORY_LIMIT = 400;
 
@@ -203,6 +205,22 @@ export class Persistence {
 
     saveOpenItems(items: OpenItem[]): void {
         this.writeJson("open-items.json", items);
+    }
+
+    // MARK: - Activity ledger
+
+    /**
+     * Everything Orbit has done on the user's behalf. Its read and write live in
+     * `activity.ts` rather than here, so the store can be verified without
+     * booting Electron; the discipline is the same as `writeJson` — atomic
+     * rename, corrupt files set aside rather than overwritten.
+     */
+    loadActivity(): ActivityEntry[] {
+        return readActivityLedger(this.dir);
+    }
+
+    saveActivity(entries: ActivityEntry[]): void {
+        writeActivityLedger(this.dir, entries);
     }
 
     // MARK: - Proposals
