@@ -30,6 +30,7 @@
     "node": ">=20.19"
   },
   "scripts": {
+    "postinstall": "node tools/postinstall.mjs",
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
     "start": "electron-vite preview",
@@ -64,6 +65,8 @@
   "overrides": {
     "vite": {
       "esbuild": "^0.28.2"
-    }
+    },
+    "@xmldom/xmldom": "0.8.13",
+    "@peculiar/asn1-schema": "2.8.0"
   }
 }
