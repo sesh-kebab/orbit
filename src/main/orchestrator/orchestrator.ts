@@ -12,6 +12,8 @@ import {
 } from "@github/copilot-sdk";
 import { z } from "zod";
 import type {
+    ActivityEntry,
+    ActivityStatus,
     AgentView,
     Cadence,
     ChatKind,
@@ -28,11 +30,22 @@ import type {
     Settings,
 } from "../../shared/types.js";
 import { isLive } from "../../shared/types.js";
+import {
+    ACTIVITY_LIMIT,
+    activityChaseBlock,
+    activityContextBlock,
+    chaseableActivity,
+    filterActivity,
+    makeActivityEntry,
+    type ActivityFilter,
+    type ActivityInput,
+} from "../activity.js";
 import { loadMcpServers } from "../mcp.js";
 import type { InteractionRecord, LoggedToolCall, Persistence, SessionSnapshot } from "../persistence.js";
 import { findCopilotCli, missingCliMessage } from "../runtime.js";
 import type { Store } from "../store.js";
 import { AgentRunner } from "./agentRunner.js";
+import { artifactPathsIn, artifactSearchDirs, resolveArtifactPaths } from "./artifacts.js";
 import { parseChoices, stripChoicesForStream } from "./choices.js";
 import { clip, elapsed, summarise } from "./describe.js";
 import { evolutionBlock, parseEvolutionLog, type EvolutionEntry } from "./evolution.js";
@@ -137,6 +150,12 @@ export class Orchestrator {
      * since launch is picked up without a restart.
      */
     private proposals: Proposal[] = [];
+    /**
+     * The activity ledger. Held here rather than in `OrbitState` for the same
+     * reason as proposals: the renderer has nothing to draw with it, and it is
+     * only read when a prompt is being assembled or a tool asks for it.
+     */
+    private activity: ActivityEntry[] = [];
     /** Conversation carried across a soft restart, if there was one. */
     private restored: SessionSnapshot | undefined;
     /**
@@ -162,6 +181,7 @@ export class Orchestrator {
     async start(): Promise<void> {
         this.persona = this.disk.loadPersona();
         this.proposals = this.disk.loadProposals();
+        this.activity = this.disk.loadActivity();
         this.store.update((state) => {
             state.schedules = this.disk.loadSchedules();
             state.leave = this.disk.loadLeave();
@@ -355,6 +375,11 @@ export class Orchestrator {
 
         const openItems = this.outstandingItems();
         if (openItems.length > 0) parts.push(this.openItemsBlock(openItems));
+
+        // What has actually been produced for the user, so "what have you made
+        // for me?" is answerable without a tool call. Capped inside.
+        const ledger = activityContextBlock(this.activity);
+        if (ledger) parts.push(ledger);
 
         const evolution = this.evolutionDigest();
         if (evolution) parts.push(evolution);
@@ -851,6 +876,95 @@ export class Orchestrator {
                 },
             }),
 
+            defineTool("orbit_record_activity", {
+                description:
+                    "Record something you did for the user in his activity ledger — a file an agent wrote, a draft you composed, a query you ran, an access you checked, an action taken in mail or calendar on his behalf. The ledger is the one durable answer to 'what have you made for me?' and 'what happened to that thing I asked for?', and unfinished entries chase him rather than being forgotten. Agent dispatches and the files agents report are recorded automatically; use this for everything you do yourself, or for work an agent did that its report did not name.",
+                skipPermission: true,
+                parameters: z.object({
+                    kind: z
+                        .enum([
+                            "artifact_written",
+                            "draft_composed",
+                            "query_run",
+                            "access_checked",
+                            "agent_dispatched",
+                            "external_action",
+                            "other",
+                        ])
+                        .describe(
+                            "What sort of thing it was. 'external_action' is anything done in mail, calendar or Teams on his behalf.",
+                        ),
+                    description: z
+                        .string()
+                        .describe("One line, written so it still makes sense a month from now."),
+                    location: z
+                        .string()
+                        .optional()
+                        .describe(
+                            "Absolute path or URL where the output lives. Always an absolute path, never a bare file name — this is what he clicks to open it.",
+                        ),
+                    request: z
+                        .string()
+                        .optional()
+                        .describe("What he actually asked for, quoted or paraphrased in a few words."),
+                    status: z
+                        .enum(["delivered", "awaiting_seshi", "stalled", "abandoned", "done"])
+                        .optional()
+                        .describe(
+                            "Defaults to 'delivered'. Use 'awaiting_seshi' when nothing can move until he looks at it — those come back to you after three days.",
+                        ),
+                    note: z.string().optional().describe("Anything else worth a few words."),
+                }),
+                handler: async (input) => this.recordActivity(input),
+            }),
+
+            defineTool("orbit_list_activity", {
+                description:
+                    "List what you have done for the user, most recent first. Use it when he asks what you have made him, what you did about something, or what is still outstanding — and before promising to do something, in case it is already done. Filter by kind, by status, or by date range; the default is a short readable page for the panel.",
+                skipPermission: true,
+                parameters: z.object({
+                    kind: z
+                        .enum([
+                            "artifact_written",
+                            "draft_composed",
+                            "query_run",
+                            "access_checked",
+                            "agent_dispatched",
+                            "external_action",
+                            "other",
+                        ])
+                        .optional()
+                        .describe("Only this kind. Omit for everything."),
+                    status: z
+                        .enum(["delivered", "awaiting_seshi", "stalled", "abandoned", "done"])
+                        .optional()
+                        .describe("Only this status. 'awaiting_seshi' is what is still on him."),
+                    from: z
+                        .string()
+                        .optional()
+                        .describe("Earliest local day to include, inclusive, e.g. '2026-08-01'."),
+                    to: z.string().optional().describe("Latest local day to include, inclusive."),
+                    limit: z.number().optional().describe("How many to return. Defaults to 12, maximum 100."),
+                }),
+                handler: async (input) => this.listActivity(input),
+            }),
+
+            defineTool("orbit_update_activity", {
+                description:
+                    "Move a ledger entry on — he has seen it, it went out, it is stuck, or it stopped mattering. Always call this once something lands or is dropped, otherwise it keeps coming back at you as unfinished work. Use 'abandoned' rather than leaving something to rot.",
+                skipPermission: true,
+                parameters: z.object({
+                    activityId: z.string(),
+                    status: z
+                        .enum(["delivered", "awaiting_seshi", "stalled", "abandoned", "done"])
+                        .optional()
+                        .describe("Where it has got to. Omit to only add a note."),
+                    note: z.string().optional().describe("Why it moved, in a few words."),
+                }),
+                handler: async ({ activityId, status, note }) =>
+                    this.updateActivity(activityId, status, note),
+            }),
+
             defineTool("orbit_record_proposal", {
                 description:
                     "Record a change to Orbit itself that you are proposing — a new capability, a fix to your own behaviour, a schedule worth retiring. Recorded proposals keep their status across sessions and are shown back to you at startup, which is what stops you re-proposing something already shipped or already declined. Check the existing list first; this is for genuinely new ideas.",
@@ -1213,6 +1327,26 @@ export class Orchestrator {
 
         this.log({ kind: "agent.start", title: agent.title, agentId: agent.id, scheduleId: options?.scheduleId });
         this.logAgentEvent(agent, "spawned", task);
+        // In flight is filed as `awaiting_seshi`: the work is out and nothing
+        // reaches him until it comes back. It also means an agent killed by a
+        // restart, which never gets a completion, is chased after three days
+        // instead of vanishing — which is the failure this ledger exists for.
+        //
+        // Two kinds of run are left out. Internal bookkeeping agents were never
+        // his ask. Watcher runs are already tracked by the schedule itself, and
+        // an hourly watcher would otherwise bury a week of real work under a
+        // hundred identical dispatch lines. Whatever either of them produces is
+        // still filed on completion.
+        if (!options?.onResult && !options?.scheduleId) {
+            this.recordActivity({
+                kind: "agent_dispatched",
+                description: agent.title,
+                request: clip(task, 200),
+                agentId: agent.id,
+                agentTitle: agent.title,
+                status: "awaiting_seshi",
+            });
+        }
         if (options?.onResult) this.internalAgents.set(agent.id, options.onResult);
         if (options?.announce !== false) this.attachSpawnCard(agent.id);
 
@@ -1242,6 +1376,13 @@ export class Orchestrator {
         this.runners.delete(agentId);
         const agent = this.findAgent(agentId);
         if (!agent) return;
+
+        // Before the report is used anywhere: turn the bare file names agents
+        // insist on writing into absolute paths, so the panel can offer a click
+        // on them. Only names that resolve to a real file are touched. Done
+        // once, on the record itself, so the chat message, the ledger, the
+        // watcher's last report and Orbit's own update all say the same thing.
+        this.resolveAgentArtifacts(agent);
 
         this.log({            kind:
                 agent.status === "failed"
@@ -1275,6 +1416,13 @@ export class Orchestrator {
         const schedule = agent.scheduleId
             ? this.store.get().schedules.find((s) => s.id === agent.scheduleId)
             : undefined;
+
+        // Close out the ledger entry this agent opened, and file whatever it
+        // produced. Internal bookkeeping agents were never recorded as
+        // dispatched, so nothing about them is recorded here either.
+        if (!this.internalAgents.has(agentId)) {
+            this.recordAgentOutcome(agent, agent.result ?? agent.error ?? "");
+        }
 
         // Work Orbit asked for on its own behalf — a calendar scan, say. It is
         // still logged like any other agent, but its answer goes to the code
@@ -1361,6 +1509,28 @@ export class Orchestrator {
             this.setBubble(`${icon} ${agent.title} — ${summarise(agent.result ?? agent.error ?? "", 120)}`);
         }
         this.store.flush();
+    }
+
+    /**
+     * Rewrite bare file names in a finished agent's report into absolute paths.
+     *
+     * The agent brief already asks for absolute paths; this is the belt to that
+     * pair of braces, because a good half of reports still say "File written:
+     * plan.md". Only names that resolve to a file that genuinely exists — in the
+     * agent's own working directory, or in the session scratch space the CLI
+     * gave it — are touched, so nothing is ever invented.
+     */
+    private resolveAgentArtifacts(agent: AgentView): void {
+        const dirs = artifactSearchDirs(agent.cwd, agent.sessionId);
+        if (dirs.length === 0) return;
+        const rewritten = agent.result ? resolveArtifactPaths(agent.result, dirs) : undefined;
+        if (rewritten === undefined || rewritten === agent.result) return;
+        this.patchAgent(agent.id, (target) => {
+            target.result = rewritten;
+        });
+        // The caller holds the same object the store does, but say so explicitly
+        // rather than relying on that: everything downstream reads `agent`.
+        agent.result = rewritten;
     }
 
     /** Batch agent updates so a burst of completions becomes one nudge to Orbit. */
@@ -2346,6 +2516,173 @@ export class Orchestrator {
         this.raiseOpenItem(`${tag} ${summary}`, "freshness check");
     }
 
+    // MARK: - Activity ledger
+
+    /**
+     * Record something done on the user's behalf.
+     *
+     * Deduplicated on kind plus location, so an agent that reports the same file
+     * twice — or a report re-parsed after a restart — updates the existing entry
+     * rather than growing a second copy of it. Text alone is not enough to
+     * dedupe on: "wrote the plan" is a sentence two different files can share.
+     */
+    recordActivity(input: ActivityInput): Record<string, unknown> {
+        const description = clip(input.description, 200);
+        if (!description) return { error: "An activity entry needs a description." };
+
+        const entry = makeActivityEntry({
+            ...input,
+            description,
+            location: input.location ? clip(input.location, 400) : undefined,
+            request: input.request ? clip(input.request, 200) : undefined,
+            agentTitle: input.agentTitle ? clip(input.agentTitle, 60) : undefined,
+            note: input.note ? clip(input.note, 200) : undefined,
+        });
+
+        const duplicate = entry.location
+            ? this.activity.find(
+                  (existing) => existing.kind === entry.kind && existing.location === entry.location,
+              )
+            : undefined;
+        if (duplicate) {
+            duplicate.description = entry.description;
+            duplicate.status = entry.status;
+            duplicate.statusChangedAt = Date.now();
+            this.persistActivity();
+            return { ok: true, activityId: duplicate.id, note: "Already in the ledger; refreshed it." };
+        }
+
+        this.activity.push(entry);
+        this.persistActivity();
+        this.log({
+            kind: "activity.recorded",
+            title: description,
+            detail: entry.location ?? entry.kind,
+            agentId: entry.agentId,
+        });
+        return { ok: true, activityId: entry.id };
+    }
+
+    /** The ledger, filtered and capped for a narrow panel. Most recent first. */
+    listActivity(filter: ActivityFilter = {}): Record<string, unknown> {
+        const matches = filterActivity(this.activity, filter);
+        return {
+            total: this.activity.length,
+            activity: matches.map((entry) => ({
+                activityId: entry.id,
+                day: entry.day,
+                kind: entry.kind,
+                status: entry.status,
+                description: entry.description,
+                location: entry.location,
+                request: entry.request,
+                agentTitle: entry.agentTitle,
+                note: entry.note,
+                age: elapsed(entry.at),
+            })),
+        };
+    }
+
+    /** Move an entry along. The only way anything ever leaves the chase list. */
+    updateActivity(
+        activityId: string,
+        status?: ActivityStatus,
+        note?: string,
+    ): Record<string, unknown> {
+        const entry = this.activity.find((candidate) => candidate.id === activityId);
+        if (!entry) return { error: "No activity entry with that id." };
+        if (!status && !note) return { error: "Give a status, a note, or both." };
+
+        if (status && status !== entry.status) {
+            entry.status = status;
+            entry.statusChangedAt = Date.now();
+            // A fresh status starts the chase clock over rather than inheriting
+            // the back-off earned while it was stuck.
+            entry.chaseCount = 0;
+            entry.lastChasedAt = undefined;
+        }
+        if (note) entry.note = clip(note, 200);
+
+        this.persistActivity();
+        this.log({ kind: "activity.updated", title: `${entry.status}: ${entry.description}`, detail: entry.note });
+        return { ok: true, activityId: entry.id, status: entry.status };
+    }
+
+    /**
+     * Put stale work back in front of Orbit.
+     *
+     * Deliberately the same mechanism open items use — `notifyOrbit`, on the
+     * slow tick, only while the user is at the desk and Orbit is not mid-thought
+     * — rather than a second nagging channel with its own rules. The cap and the
+     * per-entry back-off live in `activity.ts`.
+     */
+    private chaseStaleActivity(): void {
+        const state = this.store.get();
+        if (state.orbitBusy || !this.orbit) return;
+        if (Date.now() - state.lastInteractionAt > Orchestrator.RECENT_INTERACTION_MS) return;
+
+        const due = chaseableActivity(this.activity);
+        if (due.length === 0) return;
+
+        for (const entry of due) {
+            entry.lastChasedAt = Date.now();
+            entry.chaseCount = (entry.chaseCount ?? 0) + 1;
+        }
+        this.persistActivity();
+        this.notifyOrbit(activityChaseBlock(due));
+    }
+
+    private persistActivity(): void {
+        // The file keeps a bounded tail; the in-memory copy has to agree with it,
+        // or a long-running session would keep quoting entries the next launch
+        // will not have.
+        if (this.activity.length > ACTIVITY_LIMIT) {
+            this.activity = this.activity.slice(-ACTIVITY_LIMIT);
+        }
+        this.disk.saveActivity(this.activity);
+    }
+
+    /**
+     * Fold a finished agent into the ledger.
+     *
+     * Two things happen: the dispatch entry stops being in flight, and every
+     * file the report names — already rewritten to absolute paths, and confirmed
+     * to exist — becomes an artifact entry of its own. That second half is the
+     * whole point: a file mentioned once in a report that scrolls away is
+     * exactly what "falling through the cracks" meant.
+     */
+    private recordAgentOutcome(agent: AgentView, report: string): void {
+        const dispatch = this.activity.find(
+            (entry) => entry.kind === "agent_dispatched" && entry.agentId === agent.id,
+        );
+        if (dispatch) {
+            dispatch.status =
+                agent.status === "done"
+                    ? "delivered"
+                    : agent.status === "cancelled"
+                      ? "abandoned"
+                      : "stalled";
+            dispatch.statusChangedAt = Date.now();
+            dispatch.note = clip(agent.error ?? summarise(report, 160), 200) || undefined;
+        }
+
+        if (agent.status === "done") {
+            for (const path of artifactPathsIn(report)) {
+                this.recordActivity({
+                    kind: "artifact_written",
+                    description: `${agent.title}: ${pathName(path)}`,
+                    location: path,
+                    request: clip(agent.task, 200),
+                    agentId: agent.id,
+                    agentTitle: agent.title,
+                    status: "delivered",
+                });
+            }
+        }
+
+        this.persistActivity();
+    }
+
     // MARK: - Evolution
 
     /**
@@ -2692,6 +3029,12 @@ export class Orchestrator {
         if (this.tickCount % 200 === 0 && this.store.get().runtime === "ready") {
             void this.autoSyncWorkspace();
         }
+        // Work that has not landed, on the same slow rhythm and through the same
+        // channel — offset by half a period so the two never arrive together and
+        // read as one wall of nagging.
+        if (this.tickCount % 300 === 150 && this.store.get().runtime === "ready") {
+            this.chaseStaleActivity();
+        }
 
         const state: OrbitState = this.store.get();
         if (state.bubble && state.bubble.until < Date.now()) {
@@ -2722,6 +3065,12 @@ function mentions(text: string, name: string): boolean {
 
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Last component of a path, which is what a ledger line has room for. */
+function pathName(path: string): string {
+    const parts = path.replace(/\/+$/, "").split("/");
+    return parts[parts.length - 1] || path;
 }
 
 /** Keep every outstanding item, plus a short tail of settled ones. */function pruneResolved(items: OpenItem[]): OpenItem[] {

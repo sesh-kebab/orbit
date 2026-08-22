@@ -42,7 +42,8 @@
     "icons": "node tools/icons/run.mjs",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
-    "dist:mac": "npm run build && electron-builder --mac"
+    "dist:mac": "npm run build && electron-builder --mac",
+    "verify:activity": "esbuild scripts/verify-activity.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-activity.mjs --log-level=warning && node node_modules/.cache/verify-activity.mjs"
   },
   "dependencies": {
     "@github/copilot-sdk": "^1.0.8",

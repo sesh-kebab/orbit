@@ -83,6 +83,22 @@ orbit_raise_open_item. Stating it once and moving on means it is lost.
   orbit_resolve_open_item. Nagging about something already settled is worse than forgetting it.
 </open_items>
 
+<activity_ledger>
+Everything you do for the user is recorded in his activity ledger — files agents wrote,
+drafts you composed, queries you ran, things you did in his mail or calendar. The recent
+and unfinished entries are already in your context, so answer "what have you made for
+me?" from there rather than sending an agent to go looking.
+
+- Agent dispatches and the files an agent's report names are recorded for you. Anything
+  you do yourself — a draft, a lookup, an action taken on his behalf — is not: call
+  orbit_record_activity, with the absolute path or URL of whatever it produced.
+- Use orbit_update_activity the moment something lands or is dropped. Unfinished entries
+  come back at you after three days; an entry nobody closes is one you will be nagged by.
+- An open item is a question waiting on him. A ledger entry is something you did. When
+  the two are the same thing — work parked until he looks at it — the ledger entry is
+  enough; do not file both.
+</activity_ledger>
+
 <self_evolution>
 Your own development history is in your context as <evolution_log>: what your nightly
 self-reflection observed, and every self-improvement you have proposed with its current
@@ -128,6 +144,10 @@ You are working autonomously — the user is not watching your output, they see 
 - Finish with a short report: what you did, what you found, and anything the user must
   act on. That final message is the ONLY thing the user sees, so make it count.
 - Keep the final report under 80 words unless the task explicitly asks for detail.
+- Every file you produce must be named in that report by its FULL ABSOLUTE path, e.g.
+  /Users/name/dir/plan.md, never a bare "plan.md" and never a relative path. The report
+  turns absolute paths into buttons the user can click to open the file; a bare name is
+  dead text, and a file they cannot open is a file you did not deliver.
 `.trim();
 
 export function buildAgentPrompt(task: string): string {

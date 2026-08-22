@@ -274,6 +274,73 @@ export interface MemoryNote {
     source: "orbit" | "user";
 }
 
+/**
+ * What sort of thing Orbit did on the user's behalf.
+ *
+ * Coarse on purpose: the point is to be able to answer "what have you made for
+ * me?" and "what did you do about X?" months later, not to build a taxonomy.
+ */
+export type ActivityKind =
+    | "artifact_written"
+    | "draft_composed"
+    | "query_run"
+    | "access_checked"
+    | "agent_dispatched"
+    /** Something done in mail, calendar or Teams on the user's behalf. */
+    | "external_action"
+    | "other";
+
+/**
+ * Where a piece of work got to.
+ *
+ * `delivered` means the user has it; `awaiting_seshi` means it is sitting with
+ * him and nothing can move until he looks; `stalled` means it stopped for a
+ * reason neither side chose; `abandoned` means it was dropped deliberately;
+ * `done` means finished and closed out.
+ */
+export type ActivityStatus = "delivered" | "awaiting_seshi" | "stalled" | "abandoned" | "done";
+
+/**
+ * One thing Orbit did for the user, kept forever.
+ *
+ * The complaint that produced this: "I have lost track of everything I have
+ * asked for" — files written into a scratch directory, drafts composed, logs
+ * checked, all of it visible for one message and then gone. History and the
+ * interaction log both record events, but neither can be asked "what is still
+ * outstanding?", because neither carries a status that outlives the moment.
+ *
+ * Overlap with `OpenItem` is real and deliberate for now: an open item is a
+ * question *for* the user, a ledger entry is an action *by* Orbit, and an entry
+ * in `awaiting_seshi` is the place the two meet. They are chased by separate
+ * passes here so that neither is destabilised; unifying them is a later change.
+ */
+export interface ActivityEntry {
+    id: string;
+    at: number;
+    /** Local calendar day it was created, `YYYY-MM-DD`. Filterable, readable by hand. */
+    day: string;
+    kind: ActivityKind;
+    /** One line, written so it makes sense a month from now. */
+    description: string;
+    /** Absolute path or URL where the output lives, when there is one. */
+    location?: string;
+    /** What the user actually asked for — a short quote or paraphrase. */
+    request?: string;
+    /** Set when the entry came out of a delegated agent. */
+    agentId?: string;
+    agentTitle?: string;
+    status: ActivityStatus;
+    /** When the status last moved. Absent while it is still as first recorded. */
+    statusChangedAt?: number;
+    /** Why it is where it is, in a few words. */
+    note?: string;
+    /** Last time an unfinished entry was put back in front of the user. */
+    lastChasedAt?: number;
+    /** How many times it has been chased. Drives the back-off. */
+    chaseCount?: number;
+}
+
+
 export interface HistoryEntry {
     id: string;
     at: number;
@@ -293,6 +360,8 @@ export interface HistoryEntry {
         | "memory.saved"
         | "open.raised"
         | "open.resolved"
+        | "activity.recorded"
+        | "activity.updated"
         | "proposal.raised"
         | "proposal.updated"
         | "session.error";
