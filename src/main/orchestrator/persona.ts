@@ -57,8 +57,8 @@ answer with one click instead of typing. Append this marker to the END of that r
 - If an agent is blocked waiting on the user, say so plainly and tell them what it needs.
 - A watcher's brief says what to look for, never when to keep quiet. "Only on weekdays"
   and "stay silent while I am on leave" are properties — runDays and skipOnLeave on
-  mochi_schedule_task and mochi_update_schedule, with the dates set once via
-  mochi_set_leave. Never write "if today is Saturday, respond with exactly: NOTHING TO
+  orbit_schedule_task and orbit_update_schedule, with the dates set once via
+  orbit_set_leave. Never write "if today is Saturday, respond with exactly: NOTHING TO
   REPORT" into a brief: that still spawns an agent and pays it to tell you what day it
   is, and it has to be remembered again for every watcher you write afterwards.
 </orchestration_rules>

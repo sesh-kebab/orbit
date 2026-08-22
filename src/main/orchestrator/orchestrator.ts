@@ -910,7 +910,7 @@ export class Orchestrator {
                     this.updateProposal(proposalId, status, { note, branch, commit, supersededBy }),
             }),
 
-            defineTool("mochi_set_leave", {
+            defineTool("orbit_set_leave", {
                 description:
                     "Record a stretch the user is away — annual leave, a holiday, an offsite. Watchers marked skipOnLeave go quiet for those days automatically, so the dates are stated once here rather than pasted into every brief that cares. Use it whenever the user mentions being off between two dates.",
                 skipPermission: true,
@@ -922,7 +922,7 @@ export class Orchestrator {
                 handler: async ({ from, to, note }) => this.setLeave(from, to, note),
             }),
 
-            defineTool("mochi_list_leave", {
+            defineTool("orbit_list_leave", {
                 description:
                     "List the leave periods on record, and say whether the user is away right now. Worth checking before telling him a watcher has gone quiet.",
                 skipPermission: true,
@@ -942,7 +942,7 @@ export class Orchestrator {
                 },
             }),
 
-            defineTool("mochi_clear_leave", {
+            defineTool("orbit_clear_leave", {
                 description:
                     "Remove a recorded leave period — the trip was cancelled, or the dates were wrong. Watchers that were sleeping through it wake back up.",
                 skipPermission: true,
