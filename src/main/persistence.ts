@@ -13,6 +13,7 @@ import { join } from "node:path";
 import type {
     ChatMessage,
     HistoryEntry,
+    LeavePeriod,
     MemoryNote,
     OpenItem,
     Proposal,
@@ -178,6 +179,27 @@ export class Persistence {
 
     saveSchedules(schedules: Schedule[]): void {
         this.writeJson("schedules.json", schedules);
+    }
+
+    // MARK: - Leave
+
+    /**
+     * Stretches the user is away. Held apart from schedules on purpose: the
+     * dates are a fact about the user, not about any one watcher, and every
+     * watcher that used to carry its own copy in its prompt disagreed with the
+     * others the moment one was edited.
+     */
+    loadLeave(): LeavePeriod[] {
+        const periods = this.readJson<LeavePeriod[]>("leave.json", []);
+        if (!Array.isArray(periods)) return [];
+        return periods.filter(
+            (period) =>
+                period && typeof period.from === "string" && typeof period.to === "string",
+        );
+    }
+
+    saveLeave(leave: LeavePeriod[]): void {
+        this.writeJson("leave.json", leave);
     }
 
     // MARK: - Memories

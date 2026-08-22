@@ -23,6 +23,7 @@ export class Store extends EventEmitter {
             settings,
             models: [],
             schedules: [],
+            leave: [],
             memories: [],
             openItems: [],
             history: [],
