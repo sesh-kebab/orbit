@@ -8,7 +8,7 @@
  * agent. Dates are built with the local-time constructor on purpose: the rules
  * are about the user's week, not UTC's.
  */
-import { dailySlotOn, makeSchedule, nextAllowedRunFor } from "../src/main/orchestrator/schedules.js";
+import { dailySlotOn, isNothingToReport, makeSchedule, nextAllowedRunFor } from "../src/main/orchestrator/schedules.js";
 import {
     dayKey,
     deriveSuppression,
@@ -376,6 +376,79 @@ check("the four live watchers save sixty-odd pointless agent runs over the stret
 
 console.log(`\nOver 25 days: unrestricted ${unrestrictedRuns}, weekday-only ${lunchRuns}, briefing ${briefingRuns}.`);
 console.log(`Agent runs avoided across the four live watchers: ${saved}.`);
+
+// MARK: - The empty-run sentinel
+
+/**
+ * The four live watchers on 22 August all had "reply with exactly NOTHING TO
+ * REPORT" typed into their task, and `quiet: false`. Every one of them answered
+ * with the sentinel, and every one of them still reached the chat, because the
+ * old test only looked at the flag. Orbit narrated "Nothing." three times into
+ * an empty room, having said at 08:45 that it would stop.
+ */
+check("the bare sentinel", isNothingToReport("NOTHING TO REPORT"));
+check("lower case", isNothingToReport("nothing to report"));
+check("mixed case", isNothingToReport("Nothing To Report"));
+check("a trailing full stop — what the Search Ads watcher actually sent", isNothingToReport("NOTHING TO REPORT."));
+check("leading and trailing whitespace", isNothingToReport("  NOTHING TO REPORT\n"));
+check("a bolded sentinel", isNothingToReport("**NOTHING TO REPORT**"));
+check("a code-fenced sentinel", isNothingToReport("`NOTHING TO REPORT`"));
+check("an italicised sentinel", isNothingToReport("_Nothing to report_"));
+check("a quoted sentinel", isNothingToReport("> Nothing to report"));
+check("an exclaimed sentinel", isNothingToReport("Nothing to report!"));
+check("an elided sentinel", isNothingToReport("Nothing to report…"));
+
+// The half that matters: a real report is never swallowed for containing the
+// phrase. The old substring test failed every one of these on a quiet watcher.
+check(
+    "a report that merely opens with the phrase is still a report",
+    !isNothingToReport("Nothing to report on the migration, but Becca is still waiting on your BAMI approval."),
+);
+check(
+    "a report that mentions the phrase mid-sentence survives",
+    !isNothingToReport("Two things. The nightly job said nothing to report, which is itself the bug."),
+);
+check("an empty reply is not the sentinel", !isNothingToReport(""));
+check("a missing reply is not the sentinel", !isNothingToReport(undefined));
+check("whitespace alone is not the sentinel", !isNothingToReport("   \n  "));
+check("a near miss is not the sentinel", !isNothingToReport("nothing to report yet"));
+check("a different sentence is not the sentinel", !isNothingToReport("All clear."));
+
+/**
+ * The behaviour the fix is really for, stated exactly as the orchestrator
+ * states it: a watcher goes quiet when the *reply* is the sentinel and the run
+ * actually finished. The `quiet` flag is no longer part of the test.
+ */
+function staysSilent(status: "done" | "failed" | "cancelled", result: string): boolean {
+    return status === "done" && isNothingToReport(result);
+}
+
+check("a quiet watcher returning the sentinel stays silent, as before", staysSilent("done", "NOTHING TO REPORT"));
+check(
+    "a watcher that asked for the sentinel in its task prose now stays silent too",
+    staysSilent("done", "NOTHING TO REPORT."),
+);
+check("a watcher with something to say still speaks", !staysSilent("done", "Becca is waiting on you."));
+check(
+    "a failed run is never mistaken for a quiet one, whatever it printed",
+    !staysSilent("failed", "NOTHING TO REPORT"),
+);
+check("a cancelled run is not a quiet one either", !staysSilent("cancelled", "NOTHING TO REPORT"));
+
+/**
+ * Replaying 22 August: four watchers fired, all four answered with the
+ * sentinel, all four reached the chat. Under the fix, none of them does.
+ */
+const AUG_22_REPLIES = [
+    "NOTHING TO REPORT.", // Search Ads open questions, 08:45
+    "NOTHING TO REPORT", // Tear down Bastion, 10:00
+    "NOTHING TO REPORT", // Lunch window reminder, 11:15
+    "NOTHING TO REPORT.", // End-of-day wrap-up, 16:45
+];
+const silencedOnAug22 = AUG_22_REPLIES.filter((reply) => isNothingToReport(reply)).length;
+check("all four of 22 August's empty runs are silenced", silencedOnAug22 === 4, silencedOnAug22);
+
+console.log(`\nEmpty watcher runs on 22 Aug that now stay out of the chat: ${silencedOnAug22} of ${AUG_22_REPLIES.length}.`);
 
 // MARK: - Report
 

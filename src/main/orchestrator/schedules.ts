@@ -216,6 +216,40 @@ export function nextAllowedRunFor(
 }
 
 /**
+ * The reply a watcher sends when it has nothing worth interrupting for.
+ *
+ * `quiet` puts this sentence in the brief, but plenty of watchers were written
+ * with the instruction typed straight into the task instead. Those agents hold
+ * up their end and answer with the sentinel; only the orchestrator was not
+ * listening, so an empty run still reached the chat.
+ */
+const NOTHING_TO_REPORT = "nothing to report";
+
+/**
+ * Is this reply *only* the sentinel?
+ *
+ * Whole-reply, not substring. "Nothing to report on the migration, but Becca is
+ * still waiting on you" contains the phrase and is not an empty run — matching
+ * loosely swallows the half of the sentence that mattered.
+ *
+ * Models rarely return the bare words, so the usual dressing is forgiven:
+ * surrounding whitespace, a markdown emphasis or code wrapper, a leading
+ * blockquote marker, and closing punctuation.
+ */
+export function isNothingToReport(result: string | undefined): boolean {
+    if (!result) return false;
+    const bare = result
+        .trim()
+        .replace(/^>\s*/, "")
+        .replace(/^[*_`]+/, "")
+        .replace(/[*_`]+$/, "")
+        .replace(/[.!…\s]+$/, "")
+        .trim()
+        .toLowerCase();
+    return bare === NOTHING_TO_REPORT;
+}
+
+/**
  * Record a run that found nothing worth saying. A watcher that keeps coming
  * back empty doubles its gap rather than burning tokens forever at a cadence
  * the user picked before they knew how noisy the thing would be.

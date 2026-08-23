@@ -69,6 +69,7 @@ import {
     describeSchedule,
     isArchived,
     isBackedOff,
+    isNothingToReport,
     isRunnable,
     isValidTime,
     localDay,
@@ -1441,10 +1442,15 @@ export class Orchestrator {
 
         // Quiet watchers stay silent on uneventful runs — and a run of them
         // earns the watcher a longer leash.
+        //
+        // The sentinel counts wherever it comes from. `quiet` writes the
+        // instruction into the brief, but a watcher whose task asks for it in
+        // prose gets the same answer back, and an empty run is an empty run
+        // however the agent was told to say so.
         const nothingToReport =
-            schedule?.quiet === true &&
+            schedule !== undefined &&
             agent.status === "done" &&
-            /nothing to report/i.test(agent.result ?? "");
+            isNothingToReport(agent.result);
 
         if (schedule) {
             this.store.update((state) => {
