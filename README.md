@@ -483,6 +483,7 @@ Issues and pull requests are welcome.
 npm run typecheck        # main, renderer and the capture harness
 npm run build            # typecheck + bundle
 npm run verify:activity  # activity ledger, chase threshold, artifact paths
+npm run verify:calendar  # reading a calendar scan, and knowing when there isn't one
 npm run capture:assets   # re-shoot every image in this README
 ```
 

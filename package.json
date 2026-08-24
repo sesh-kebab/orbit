@@ -43,7 +43,8 @@
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac",
-    "verify:activity": "esbuild scripts/verify-activity.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-activity.mjs --log-level=warning && node node_modules/.cache/verify-activity.mjs"
+    "verify:activity": "esbuild scripts/verify-activity.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-activity.mjs --log-level=warning && node node_modules/.cache/verify-activity.mjs",
+    "verify:calendar": "esbuild scripts/verify-calendar.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-calendar.mjs --log-level=warning && node node_modules/.cache/verify-calendar.mjs"
   },
   "dependencies": {
     "@github/copilot-sdk": "^1.0.8",

@@ -52,13 +52,16 @@ import { evolutionBlock, parseEvolutionLog, type EvolutionEntry } from "./evolut
 import {
     CALENDAR_SCAN_TEMPLATE,
     armableMeetings,
+    calendarUnavailableMessage,
     classifyMeeting,
     headsUpAt,
     headsUpLine,
-    parseMeetingPlan,
     prepBriefFor,
+    readMeetingPlan,
     wantsPrep,
+    type CalendarProblem,
     type Meeting,
+    type MeetingPlan,
 } from "./meetings.js";
 import { MCP_TOOLS_RULE, ORBIT_PERSONA } from "./persona.js";
 import {
@@ -2154,6 +2157,22 @@ export class Orchestrator {
     /** How often the plan is rebuilt, so meetings added mid-day are caught. */
     private static readonly MEETING_RESCAN_MS = 45 * 60 * 1000;
 
+    /**
+     * How often to retry once it is established there is no calendar to read.
+     *
+     * On 23 August the scan ran twenty-nine times, every forty-six minutes from
+     * midnight to half past nine at night, against an Outlook with no account
+     * signed in. None of those runs could have succeeded and none of them was
+     * cheap. A wall is worth re-checking a few times a day, not thirty-two.
+     */
+    private static readonly MEETING_BLIND_RESCAN_MS = 6 * 60 * 60 * 1000;
+
+    /** The tag on the one open item that tracks a calendar nobody can read. */
+    private static readonly CALENDAR_TAG = "[calendar]";
+
+    /** Set while the last scan failed; cleared by the first that works. */
+    private calendarProblem?: { problem: CalendarProblem; detail: string; runs: number };
+
     private lastCalendarScanAt = 0;
 
     /** How long a scan may be in flight before it is written off as lost. */
@@ -2188,7 +2207,14 @@ export class Orchestrator {
 
         const now = Date.now();
         const newDay = this.meetingPlanDay !== localDay(now);
-        const stale = now - this.lastCalendarScanAt >= Orchestrator.MEETING_RESCAN_MS;
+        // A calendar that cannot be read is retried on a much slower cadence.
+        // The new day still forces one, so signing in overnight is noticed by
+        // the morning rather than six hours into it.
+        const interval =
+            this.calendarProblem?.problem === "no-calendar"
+                ? Orchestrator.MEETING_BLIND_RESCAN_MS
+                : Orchestrator.MEETING_RESCAN_MS;
+        const stale = now - this.lastCalendarScanAt >= interval;
         if (!newDay && !stale) return;
 
         this.scanningCalendar = true;
@@ -2200,12 +2226,70 @@ export class Orchestrator {
             onResult: (agent) => {
                 this.scanningCalendar = false;
                 if (agent.status !== "done") return;
-                this.adoptMeetingPlan(parseMeetingPlan(agent.result ?? ""));
+                this.applyMeetingPlan(readMeetingPlan(agent.result ?? ""));
             },
         });
         // The agent cap and a missing runtime both come back as an error rather
         // than an id; either way there is nothing in flight to wait for.
         if (spawned.agentId === undefined) this.scanningCalendar = false;
+    }
+
+    /**
+     * Act on a scan, which now includes the case where there was nothing to act
+     * on.
+     *
+     * The important branch is the failure one, and specifically what it does
+     * *not* do: it does not adopt an empty plan. Disarming every heads-up
+     * because the calendar could not be reached turns "I don't know" into "you
+     * are free", silently, on a cadence — which is how a blind calendar went
+     * unnoticed for weeks.
+     */
+    private applyMeetingPlan(plan: MeetingPlan): void {
+        if (plan.ok) {
+            const wasBlind = this.calendarProblem !== undefined;
+            this.calendarProblem = undefined;
+            if (wasBlind) this.reconcileCalendarAccess();
+            this.adoptMeetingPlan(plan.meetings);
+            return;
+        }
+
+        this.calendarProblem = {
+            problem: plan.problem,
+            detail: plan.detail,
+            runs: (this.calendarProblem?.runs ?? 0) + 1,
+        };
+        console.log(`[orbit] calendar scan failed (${plan.problem}): ${plan.detail}`);
+        this.reconcileCalendarAccess();
+    }
+
+    /**
+     * Keep exactly one open item in step with whether the calendar is readable.
+     *
+     * Same shape as the freshness check, and for the same reason: the fact is
+     * rediscovered on every scan, so it has to be stated once and withdrawn by
+     * the code that finds it fixed, rather than repeated until it is believed.
+     * Only "no calendar" is worth raising — a single unreadable reply is more
+     * likely a bad run than a broken account, and the retry costs nothing.
+     */
+    private reconcileCalendarAccess(): void {
+        const tag = Orchestrator.CALENDAR_TAG;
+        const existing = this.store
+            .get()
+            .openItems.find((item) => !item.resolved && item.text.startsWith(tag));
+
+        if (this.calendarProblem?.problem !== "no-calendar") {
+            if (existing) this.resolveOpenItem(existing.id, "A calendar scan succeeded.");
+            return;
+        }
+        // Already asked. The answer is a sign-in, and nagging does not perform it.
+        if (existing) return;
+
+        const detail = this.calendarProblem.detail;
+        this.raiseOpenItem(
+            `${tag} I cannot read your calendar, so I have no idea what is in your day. ${detail}`,
+            "calendar scan",
+        );
+        this.say(calendarUnavailableMessage(detail));
     }
 
     /** Replace the armed timers with the ones this plan calls for. */
