@@ -30,16 +30,21 @@
     "node": ">=20.19"
   },
   "scripts": {
+    "postinstall": "node tools/postinstall.mjs",
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
     "start": "electron-vite preview",
     "snapshot": "electron-vite build && ORBIT_SNAPSHOT=1 electron .",
     "capture:assets": "node tools/capture/run.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.capture.json",
+    "verify:suppression": "esbuild scripts/verify-suppression.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-suppression.mjs --log-level=warning && node node_modules/.cache/verify-suppression.mjs",
+    "verify:freshness": "esbuild scripts/verify-freshness.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-freshness.mjs --log-level=warning && node node_modules/.cache/verify-freshness.mjs",
     "icons": "node tools/icons/run.mjs",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
-    "dist:mac": "npm run build && electron-builder --mac"
+    "dist:mac": "npm run build && electron-builder --mac",
+    "verify:activity": "esbuild scripts/verify-activity.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-activity.mjs --log-level=warning && node node_modules/.cache/verify-activity.mjs",
+    "verify:calendar": "esbuild scripts/verify-calendar.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-calendar.mjs --log-level=warning && node node_modules/.cache/verify-calendar.mjs"
   },
   "dependencies": {
     "@github/copilot-sdk": "^1.0.8",
@@ -62,6 +67,8 @@
   "overrides": {
     "vite": {
       "esbuild": "^0.28.2"
-    }
+    },
+    "@xmldom/xmldom": "0.8.13",
+    "@peculiar/asn1-schema": "2.8.0"
   }
 }

@@ -164,6 +164,47 @@ export interface Schedule {
     archived?: boolean;
     /** When it was archived, by hand or automatically after a one-off fired. */
     archivedAt?: number;
+    /**
+     * Days this watcher is allowed to run, `0` Sunday through `6` Saturday.
+     * Absent means every day.
+     *
+     * This is deliberately a property rather than a paragraph in the brief. The
+     * prose version — "if today is Saturday, respond with exactly: NOTHING TO
+     * REPORT" — was pasted by hand into four separate schedules, still spawned
+     * an agent and still burned a run to say nothing, and the fifth schedule
+     * was always going to be written without it.
+     */
+    runDays?: number[];
+    /**
+     * Stay silent while the user is on leave, per the recorded leave periods.
+     * Same reasoning as `runDays`: the dates belong in one place that can go
+     * stale visibly, not hard-coded into every brief that happens to care.
+     */
+    skipOnLeave?: boolean;
+    /**
+     * The one-time migration from prose has already looked at this schedule.
+     * Set whether or not it found anything, so a brief the user has since
+     * rewritten by hand is never re-derived behind their back.
+     */
+    suppressionDerived?: boolean;
+}
+
+/**
+ * A stretch of days the user is away.
+ *
+ * Held once, centrally, because every watcher that cares about leave used to
+ * carry its own copy of the dates in its prompt — four copies of "on leave from
+ * 2026-08-21 returning around 2026-09-08", none of which would notice when that
+ * became untrue.
+ */
+export interface LeavePeriod {
+    id: string;
+    /** Local calendar day, `YYYY-MM-DD`, inclusive. */
+    from: string;
+    /** Local calendar day, `YYYY-MM-DD`, inclusive. */
+    to: string;
+    /** Why, in a few words. Shown back to the user when they ask. */
+    note?: string;
 }
 
 /**
@@ -233,6 +274,73 @@ export interface MemoryNote {
     source: "orbit" | "user";
 }
 
+/**
+ * What sort of thing Orbit did on the user's behalf.
+ *
+ * Coarse on purpose: the point is to be able to answer "what have you made for
+ * me?" and "what did you do about X?" months later, not to build a taxonomy.
+ */
+export type ActivityKind =
+    | "artifact_written"
+    | "draft_composed"
+    | "query_run"
+    | "access_checked"
+    | "agent_dispatched"
+    /** Something done in mail, calendar or Teams on the user's behalf. */
+    | "external_action"
+    | "other";
+
+/**
+ * Where a piece of work got to.
+ *
+ * `delivered` means the user has it; `awaiting_seshi` means it is sitting with
+ * him and nothing can move until he looks; `stalled` means it stopped for a
+ * reason neither side chose; `abandoned` means it was dropped deliberately;
+ * `done` means finished and closed out.
+ */
+export type ActivityStatus = "delivered" | "awaiting_seshi" | "stalled" | "abandoned" | "done";
+
+/**
+ * One thing Orbit did for the user, kept forever.
+ *
+ * The complaint that produced this: "I have lost track of everything I have
+ * asked for" — files written into a scratch directory, drafts composed, logs
+ * checked, all of it visible for one message and then gone. History and the
+ * interaction log both record events, but neither can be asked "what is still
+ * outstanding?", because neither carries a status that outlives the moment.
+ *
+ * Overlap with `OpenItem` is real and deliberate for now: an open item is a
+ * question *for* the user, a ledger entry is an action *by* Orbit, and an entry
+ * in `awaiting_seshi` is the place the two meet. They are chased by separate
+ * passes here so that neither is destabilised; unifying them is a later change.
+ */
+export interface ActivityEntry {
+    id: string;
+    at: number;
+    /** Local calendar day it was created, `YYYY-MM-DD`. Filterable, readable by hand. */
+    day: string;
+    kind: ActivityKind;
+    /** One line, written so it makes sense a month from now. */
+    description: string;
+    /** Absolute path or URL where the output lives, when there is one. */
+    location?: string;
+    /** What the user actually asked for — a short quote or paraphrase. */
+    request?: string;
+    /** Set when the entry came out of a delegated agent. */
+    agentId?: string;
+    agentTitle?: string;
+    status: ActivityStatus;
+    /** When the status last moved. Absent while it is still as first recorded. */
+    statusChangedAt?: number;
+    /** Why it is where it is, in a few words. */
+    note?: string;
+    /** Last time an unfinished entry was put back in front of the user. */
+    lastChasedAt?: number;
+    /** How many times it has been chased. Drives the back-off. */
+    chaseCount?: number;
+}
+
+
 export interface HistoryEntry {
     id: string;
     at: number;
@@ -247,9 +355,13 @@ export interface HistoryEntry {
         | "schedule.run"
         | "schedule.created"
         | "schedule.updated"
+        /** A run the clock skipped: wrong day of the week, or the user is away. */
+        | "schedule.skipped"
         | "memory.saved"
         | "open.raised"
         | "open.resolved"
+        | "activity.recorded"
+        | "activity.updated"
         | "proposal.raised"
         | "proposal.updated"
         | "session.error";
@@ -277,6 +389,12 @@ export interface WindowBounds {
 export interface Settings {
     /** Directory agents are allowed to work in by default. */
     workspace: string;
+    /**
+     * Git repository the workspace sync copies agent output into. Empty means
+     * "use the default", `~/git/workspace`. `ORBIT_WORKSPACE_REPO` overrides
+     * this. Sync is skipped entirely when no git repository is found there.
+     */
+    workspaceRepo: string;
     model: string;
     /** Approve every tool call without asking. Off by default, for good reason. */
     yolo: boolean;
@@ -423,6 +541,8 @@ export interface OrbitState {
     settings: Settings;
     models: Array<{ id: string; name: string }>;
     schedules: Schedule[];
+    /** Stretches the user is away. Watchers that opt in stay quiet through them. */
+    leave: LeavePeriod[];
     memories: MemoryNote[];
     /** Decisions still waiting on the user. Resolved ones are dropped. */
     openItems: OpenItem[];

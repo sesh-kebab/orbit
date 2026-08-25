@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { Cadence, Schedule } from "../../shared/types.js";
+import type { Cadence, LeavePeriod, Schedule } from "../../shared/types.js";
+import {
+    describeSuppression,
+    hasSuppression,
+    nextAllowedRun,
+} from "./suppression.js";
 
 /** Next fire time for a cadence, relative to `from`. */
 export function nextRun(cadence: Cadence, from = Date.now()): number {
@@ -179,13 +184,69 @@ export function catchUpDecision(
     return { run, nextRunAt: slot + day, slotAt: slot };
 }
 
-/** Cadence for display, with the back-off called out when there is one. */
+/** Cadence for display, with the back-off and any silence rules called out. */
 export function describeSchedule(schedule: Schedule): string {
     const configured = describeCadence(schedule.cadence);
-    if (!isBackedOff(schedule)) return configured;
-    return `${configured}, backed off to ${describeCadence(effectiveCadence(schedule))} after ${
-        schedule.quietRuns ?? 0
-    } quiet runs`;
+    const base = !isBackedOff(schedule)
+        ? configured
+        : `${configured}, backed off to ${describeCadence(effectiveCadence(schedule))} after ${
+              schedule.quietRuns ?? 0
+          } quiet runs`;
+    const silence = describeSuppression(schedule);
+    return silence ? `${base} (${silence})` : base;
+}
+
+/**
+ * Next fire time for a schedule, skipping days it is not allowed to run.
+ *
+ * Daily watchers keep their slot on whichever day they land on: a briefing due
+ * at 08:00 that skips a weekend is wanted at 08:00 on Monday, not at midnight.
+ */
+export function nextAllowedRunFor(
+    schedule: Schedule,
+    leave: LeavePeriod[],
+    from = Date.now(),
+): number {
+    const candidate = nextRunFor(schedule, from);
+    if (!hasSuppression(schedule)) return candidate;
+    const cadence = schedule.cadence;
+    return nextAllowedRun(schedule, leave, candidate, (dayStart) =>
+        cadence.kind === "daily" ? dailySlotOn(cadence, dayStart)! : dayStart,
+    );
+}
+
+/**
+ * The reply a watcher sends when it has nothing worth interrupting for.
+ *
+ * `quiet` puts this sentence in the brief, but plenty of watchers were written
+ * with the instruction typed straight into the task instead. Those agents hold
+ * up their end and answer with the sentinel; only the orchestrator was not
+ * listening, so an empty run still reached the chat.
+ */
+const NOTHING_TO_REPORT = "nothing to report";
+
+/**
+ * Is this reply *only* the sentinel?
+ *
+ * Whole-reply, not substring. "Nothing to report on the migration, but Becca is
+ * still waiting on you" contains the phrase and is not an empty run — matching
+ * loosely swallows the half of the sentence that mattered.
+ *
+ * Models rarely return the bare words, so the usual dressing is forgiven:
+ * surrounding whitespace, a markdown emphasis or code wrapper, a leading
+ * blockquote marker, and closing punctuation.
+ */
+export function isNothingToReport(result: string | undefined): boolean {
+    if (!result) return false;
+    const bare = result
+        .trim()
+        .replace(/^>\s*/, "")
+        .replace(/^[*_`]+/, "")
+        .replace(/[*_`]+$/, "")
+        .replace(/[.!…\s]+$/, "")
+        .trim()
+        .toLowerCase();
+    return bare === NOTHING_TO_REPORT;
 }
 
 /**
@@ -257,6 +318,8 @@ export function makeSchedule(input: {
     task: string;
     cadence: Cadence;
     quiet?: boolean;
+    runDays?: number[];
+    skipOnLeave?: boolean;
 }): Schedule {
     return {
         id: randomUUID(),
@@ -270,6 +333,11 @@ export function makeSchedule(input: {
         quiet: input.quiet ?? false,
         quietRuns: 0,
         archived: false,
+        runDays: input.runDays,
+        skipOnLeave: input.skipOnLeave,
+        // Written with the property already set, so the prose migration has
+        // nothing to say about it.
+        suppressionDerived: true,
     };
 }
 

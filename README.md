@@ -183,6 +183,8 @@ no restart.
 ```jsonc
 {
   "workspace": "/Users/you/code/project", // where agents run by default
+  "workspaceRepo": "",                    // git repo the daily sync files agent output into;
+                                          // "" means ~/git/workspace, ORBIT_WORKSPACE_REPO wins
   "model": "auto",                        // any id from `Model` in the menu bar
   "yolo": false,                          // approve every tool call
   "autoApproveReads": true,               // let read-only actions through silently
@@ -206,6 +208,26 @@ waiting on a human who went to bed.
 standing instructions to be. It's prepended to the built-in orchestrator persona
 (`src/main/orchestrator/persona.ts`) on every session, alongside anything Orbit has
 remembered about you and live context like your workspace and current watchers.
+
+The file ships with a starting set of tone and output-shape preferences: one idea per
+message, lead with the decision, numbered lists over prose, a concrete next action, no
+em-dashes. They are defaults, not rules of the app, so delete or rewrite anything that does
+not suit you. The compiled persona only fixes what is true of Orbit whoever is running it:
+the panel is narrow, so replies stay short, and real work goes to agents. If your
+`persona.md` is still exactly as it shipped, an update may refresh it to the newer template;
+change a single character and it is yours for good.
+
+### Saving the day's work
+
+Agents write files into Copilot's session scratch space, which is per-machine and vanishes
+from view with the session. Once an evening Orbit copies them into a git repository, filed
+under the date each file was written, then commits and pushes. Ask for it any time ("save
+today's work") and it runs on demand.
+
+Point it at a repo with `workspaceRepo` in `settings.json`, or with the
+`ORBIT_WORKSPACE_REPO` environment variable, which takes priority. The default is
+`~/git/workspace`. Nothing is ever created or overwritten: with no git repository at that
+path the sync just reports that it skipped.
 
 ### MCP servers (optional)
 
@@ -254,8 +276,8 @@ quietly pretending the tools never existed.
 
 Orbit's whole toolbox is orchestration — `orbit_spawn_agent`, `orbit_list_agents`,
 `orbit_agent_details`, `orbit_message_agent`, `orbit_cancel_agent`, plus watchers, memory,
-open items and proposals. That constraint is what keeps it a delegator instead of quietly
-doing the work itself in the chat window.
+open items, the activity ledger and proposals. That constraint is what keeps it a delegator
+instead of quietly doing the work itself in the chat window.
 
 <details>
 <summary><b>Standing watchers</b> — cadences, catch-up rules and archiving</summary>
@@ -296,6 +318,38 @@ re-proposing what it already built.
 > **Upgrading from Mochi?** The app was called Mochi before. State under
 > `~/Library/Application Support/mochi/` and `~/.copilot/mochi/` moves across automatically
 > on first launch (`src/main/migrate.ts`); anything already in the new location wins.
+
+</details>
+
+<details>
+<summary><b>The activity ledger</b> — what Orbit has actually done for you</summary>
+
+Everything Orbit does on your behalf is recorded in `activity.json` next to the other
+stores: a timestamp and day, a kind (`artifact_written`, `draft_composed`, `query_run`,
+`access_checked`, `agent_dispatched`, `external_action`, `other`), a one-line description,
+the absolute path or URL of whatever it produced, what you actually asked for, the agent it
+came from, and a status (`delivered`, `awaiting_seshi`, `stalled`, `abandoned`, `done`).
+
+It fills itself in where the plumbing already exists — on every agent dispatch, and again
+on completion, where the files the report names are pulled out and filed individually — and
+Orbit adds to it directly with `orbit_record_activity`, reads it with `orbit_list_activity`
+(filterable by kind, status and date range) and moves entries on with
+`orbit_update_activity`.
+
+Recent and unfinished entries are injected into the system prompt at startup, capped, so
+"what have you made for me?" is answered without a tool call. Anything left
+`awaiting_seshi` or `stalled` for **three days** is put back in front of Orbit through the
+same re-raise channel open items use — at most three at a time, and each chase doubles the
+wait before the next one, so something you have decided to ignore fades instead of becoming
+an alarm clock.
+
+Open items and ledger entries overlap on purpose for now: an open item is a question *for*
+you, a ledger entry is an action *by* Orbit, and `awaiting_seshi` is where the two meet.
+They are stored and chased separately so neither destabilises the other; unifying them is a
+later change.
+
+Run `npm run verify:activity` to check the store round-trips, the three-day threshold, the
+context cap and the file-name resolution.
 
 </details>
 
@@ -350,6 +404,13 @@ VS Code, directories in Finder, alt/shift-click reveals either. Only paths that 
 exist become chips — main stats each candidate (`src/main/reveal.ts`) first. A path with
 spaces needs backticks or quotes. Nothing on this route is ever executed.
 
+Agents are told to report every file they produce by absolute path, and the reports that
+ignore that are repaired: a bare "File written: plan.md" is resolved against the agent's
+working directory and its session scratch space, and rewritten to an absolute path *only*
+when a file of that name is really there (`src/main/orchestrator/artifacts.ts`). Nothing is
+guessed, and anything already a path or a URL is left for the passes that already handle
+it.
+
 **Quick replies.** Orbit can offer answers as chips by appending an inline marker the
 orchestrator parses off before the message reaches the screen
 (`src/main/orchestrator/choices.ts`):
@@ -381,6 +442,7 @@ src/
     panel.ts                 transparent always-on-top window
     store.ts                 state container, throttled snapshots to the renderer
     persistence.ts           schedules, memories, proposals, persona, history
+    activity.ts              the activity ledger: store, filters, chase and context block
     migrate.ts               one-time move of state left by the previous app name
     reveal.ts                resolve, verify and open file paths safely
     settings.ts
@@ -394,6 +456,7 @@ src/
       schedules.ts           cadences and the daily briefing template
       meetings.ts            meeting shape, prep briefs, calendar plan parsing
       describe.ts            tool calls → readable activity lines
+      artifacts.ts           bare file names in a report → absolute, clickable paths
   preload/index.ts           context-isolated bridge
   renderer/
     App.tsx                  layout, dragging, click-through
@@ -419,6 +482,8 @@ Issues and pull requests are welcome.
 ```bash
 npm run typecheck        # main, renderer and the capture harness
 npm run build            # typecheck + bundle
+npm run verify:activity  # activity ledger, chase threshold, artifact paths
+npm run verify:calendar  # reading a calendar scan, and knowing when there isn't one
 npm run capture:assets   # re-shoot every image in this README
 ```
 

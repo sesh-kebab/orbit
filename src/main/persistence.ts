@@ -11,8 +11,10 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
+    ActivityEntry,
     ChatMessage,
     HistoryEntry,
+    LeavePeriod,
     MemoryNote,
     OpenItem,
     Proposal,
@@ -20,6 +22,7 @@ import type {
     UsageTotals,
     WindowBounds,
 } from "../shared/types.js";
+import { readActivityLedger, writeActivityLedger } from "./activity.js";
 
 const HISTORY_LIMIT = 400;
 
@@ -180,6 +183,27 @@ export class Persistence {
         this.writeJson("schedules.json", schedules);
     }
 
+    // MARK: - Leave
+
+    /**
+     * Stretches the user is away. Held apart from schedules on purpose: the
+     * dates are a fact about the user, not about any one watcher, and every
+     * watcher that used to carry its own copy in its prompt disagreed with the
+     * others the moment one was edited.
+     */
+    loadLeave(): LeavePeriod[] {
+        const periods = this.readJson<LeavePeriod[]>("leave.json", []);
+        if (!Array.isArray(periods)) return [];
+        return periods.filter(
+            (period) =>
+                period && typeof period.from === "string" && typeof period.to === "string",
+        );
+    }
+
+    saveLeave(leave: LeavePeriod[]): void {
+        this.writeJson("leave.json", leave);
+    }
+
     // MARK: - Memories
 
     loadMemories(): MemoryNote[] {
@@ -205,6 +229,22 @@ export class Persistence {
         this.writeJson("open-items.json", items);
     }
 
+    // MARK: - Activity ledger
+
+    /**
+     * Everything Orbit has done on the user's behalf. Its read and write live in
+     * `activity.ts` rather than here, so the store can be verified without
+     * booting Electron; the discipline is the same as `writeJson` — atomic
+     * rename, corrupt files set aside rather than overwritten.
+     */
+    loadActivity(): ActivityEntry[] {
+        return readActivityLedger(this.dir);
+    }
+
+    saveActivity(entries: ActivityEntry[]): void {
+        writeActivityLedger(this.dir, entries);
+    }
+
     // MARK: - Proposals
 
     /**
@@ -228,6 +268,25 @@ export class Persistence {
 
     saveProposals(proposals: Proposal[]): void {
         this.writeJson("proposals.json", proposals);
+    }
+
+    // MARK: - Workspace sync
+
+    /**
+     * The last local day the working repo was synced. One string, deliberately:
+     * the sync itself is idempotent — it re-derives everything from what is on
+     * disk — so the only thing worth remembering is whether today's automatic
+     * pass has already happened, and a date survives a corrupt-file reset
+     * without losing anything a re-run would not rediscover.
+     */
+    loadWorkspaceSyncDay(): string | undefined {
+        const saved = this.readJson<{ lastSyncedDay?: unknown } | undefined>("workspace-sync.json", undefined);
+        const day = saved?.lastSyncedDay;
+        return typeof day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : undefined;
+    }
+
+    saveWorkspaceSyncDay(day: string): void {
+        this.writeJson("workspace-sync.json", { lastSyncedDay: day, at: Date.now() });
     }
 
     // MARK: - Window bounds
@@ -402,9 +461,38 @@ Edit this file to shape how Orbit behaves. It is appended to Orbit's system
 prompt every time a session starts, so changes take effect on the next restart
 (or when you change the model or workspace).
 
+Everything below is a starting point, not a rule of the app. Delete what does
+not suit you. The built-in prompt only fixes the things that are true of Orbit
+whoever is running it: the panel is narrow, so replies stay short, and real work
+is handed to agents rather than done in the chat.
+
 ## Tone
 - Dry, quick, a little smug. One joke per message, maximum.
 - Short replies. This chat panel is narrow.
+- Never use em-dashes. Use a comma, a colon, or a full stop instead.
+
+## Output shape
+Defaults tuned for reading in short bursts and acting on what you read. Brevity
+still wins wherever these collide with the built-in shortness rules.
+
+- One idea per message. Finish the current thing before raising the next one.
+- Lead with the decision, the answer, or the next action. Context comes after,
+  if at all.
+- When you enumerate more than two things, use a numbered list, not prose or
+  bullets. Cap it at 5 items and split into now versus later if there are more.
+  This is the one case where a list beats sentences, and it overrides the
+  no-lists default in the built-in prompt.
+- Close with the single next action, and make it concrete enough to start
+  immediately. One action, not a menu of options.
+- State where things stand rather than assuming I remember: "Deploy done. Docs
+  left."
+- Give time in minutes or hours. Never "a bit" or "some work".
+- Report errors flat: cause, then fix. No alarm noises, no apology spiral.
+- No recap, no closing pleasantry. Stop when the point is made.
+
+Ignore the shortness rules when I ask you to explain or walk through something,
+when you are about to do something destructive, or when the honest answer is one
+short clarifying question. Even then: no preamble, no closer.
 
 ## Standing instructions
 - (add your own, e.g. "always tell me the file paths you changed")

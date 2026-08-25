@@ -7,6 +7,7 @@ import { CHAT_FONTS, CHAT_FONT_BASE, CHAT_FONT_MAX, CHAT_FONT_MIN } from "../sha
 
 const DEFAULTS: Settings = {
     workspace: homedir(),
+    workspaceRepo: "",
     model: "auto",
     // Off by default: agents get shell and file-write access, so the human
     // stays in the loop unless they explicitly opt out.
@@ -46,6 +47,7 @@ export function normalizeSettings(settings: Settings): Settings {
     if (!merged.workspace || !existsSync(merged.workspace)) {
         merged.workspace = DEFAULTS.workspace;
     }
+    merged.workspaceRepo = typeof merged.workspaceRepo === "string" ? merged.workspaceRepo.trim() : "";
     merged.panelOpacity = clamp(Number(merged.panelOpacity), 0.3, 1, DEFAULTS.panelOpacity);
     merged.chatFontSize = Math.round(
         clamp(Number(merged.chatFontSize), CHAT_FONT_MIN, CHAT_FONT_MAX, DEFAULTS.chatFontSize),

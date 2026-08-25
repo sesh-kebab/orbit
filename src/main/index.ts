@@ -10,6 +10,7 @@ import { Persistence } from "./persistence.js";
 import { inspectPaths, openExternalUrl, openPath, revealPath } from "./reveal.js";
 import { migrateLegacyState } from "./migrate.js";
 import { clampToScreen, createPanel, defaultBounds, resizeFromTopLeft, resolveRendererUrl } from "./panel.js";
+import { assessFreshness, collectFreshnessFacts } from "./freshness.js";
 import { loadSettings, normalizeSettings, saveSettings, watchSettings } from "./settings.js";
 import {
     cancelDictation,
@@ -64,6 +65,7 @@ void app.whenReady().then(async () => {
     trackBounds(window);
 
     orchestrator.onSoftRestart = relaunch;
+    orchestrator.freshness = checkFreshness();
 
     store.on("state", (state) => {
         if (window && !window.isDestroyed()) {
@@ -118,6 +120,27 @@ function persistBounds(): void {
         disk.saveWindowBounds(window.getBounds());
     } catch (error) {
         console.error("[orbit] could not save window bounds:", error);
+    }
+}
+
+/**
+ * Compare the running process against the code on disk.
+ *
+ * Only meaningful when running from a checkout: a packaged app has no source
+ * tree to be behind, and `collectFreshnessFacts` returns nothing to compare in
+ * that case, so this quietly reports nothing rather than guessing.
+ */
+function checkFreshness(): ReturnType<typeof assessFreshness> | undefined {
+    try {
+        const now = Date.now();
+        const facts = collectFreshnessFacts(app.getAppPath(), process.uptime() * 1000, now);
+        const freshness = assessFreshness(facts, now);
+        if (freshness.summary) console.warn(`[orbit] ${freshness.summary}`);
+        return freshness;
+    } catch (error) {
+        // Never let a housekeeping check stop the app from starting.
+        console.error("[orbit] could not check build freshness:", error);
+        return undefined;
     }
 }
 

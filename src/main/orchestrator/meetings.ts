@@ -228,27 +228,126 @@ Rules:
 - Skip all-day events, and skip anything the user has declined.
 - "others" excludes the user. A 1:1 therefore has exactly one entry.
 - If there are none, reply with exactly: []
+- If you have no way to read the calendar at all — no calendar tool, nothing signed in,
+  a refused token — do NOT reply []. Say so in one plain sentence instead, naming what
+  you tried and what failed. An empty array means "the calendar is clear", and claiming
+  that when you cannot see it is the worst answer you can give.
 `.trim();
 
+/** Why a scan produced no usable plan. */
+export type CalendarProblem =
+    /** There is no calendar to read: nothing signed in, no tool, auth refused. */
+    | "no-calendar"
+    /** Something answered, but not with a day's meetings. */
+    | "unreadable";
+
 /**
- * Pull the meeting list out of whatever the scan agent actually replied with.
+ * The outcome of one calendar scan.
  *
- * Agents are asked for bare JSON and mostly comply, but "mostly" is not a
- * parser. Anything that is not a well-formed meeting is dropped rather than
- * allowed to take the whole day's plan down with it.
+ * The whole point of this type is the distinction it forces at every call site:
+ * "the calendar says you have nothing on" and "I could not read your calendar"
+ * are opposite facts, and for weeks both arrived as an empty array.
+ */
+export type MeetingPlan =
+    | { ok: true; meetings: Meeting[] }
+    | { ok: false; problem: CalendarProblem; detail: string };
+
+/**
+ * Phrases that mean the calendar could not be reached at all.
+ *
+ * Only consulted once a reply has failed to be a meeting list, so these need to
+ * separate "no calendar" from "some other kind of nonsense" — not from real
+ * data.
+ */
+const NO_CALENDAR_SIGNS: RegExp[] = [
+    /\bno\b[^.]{0,30}\bcalendar (tool|access|source|server|integration|mcp)/i,
+    /\bno\b[^.]{0,20}\btool (is )?available\b/i,
+    /\bno account is signed[\s-]?in\b/i,
+    /\b(is )?not signed[\s-]?in\b/i,
+    /\bsign(ed)? in(to)?\b[^.]{0,40}\b(outlook|calendar|microsoft|account)\b/i,
+    /\b(can(no|')?t|cannot|unable to|failed to)\b[^.]{0,60}\b(calendar|meetings)\b/i,
+    /\b(calendar|outlook|graph)\b[^.]{0,40}\b(unavailable|not (available|configured|connected|accessible))\b/i,
+    /\bAADSTS\d+/i,
+    /\bconditional access\b/i,
+    /\btoken\b[^.]{0,20}\b(blocked|expired|invalid|denied)\b/i,
+    /\b(authentication|authorisation|authorization)\b[^.]{0,20}\b(failed|required|error|denied)\b/i,
+    /\bnot (authenticated|authorised|authorized)\b/i,
+];
+
+/**
+ * Does this reply describe a calendar that could not be read?
+ *
+ * Pure and exported so the judgement can be argued with in a test rather than
+ * inferred from an app that only reproduces it once every forty-five minutes.
+ */
+export function describesNoCalendarAccess(reply: string): boolean {
+    const text = reply.trim();
+    if (!text) return false;
+    return NO_CALENDAR_SIGNS.some((sign) => sign.test(text));
+}
+
+/**
+ * Read the scan agent's reply as either a day's meetings or a reason there are
+ * none to be had.
+ *
+ * On 23 August the scan agent did the honest thing. It had tried Outlook (no
+ * account signed in), Apple Calendar (no store) and Graph (conditional access
+ * refused the token), and it said so — explicitly refusing to reply `[]`
+ * "because that would falsely imply no meetings". The old parser searched the
+ * whole reply for the outermost brackets, found the `[]` inside that very
+ * sentence, and recorded a clear day. The one run that told the truth was the
+ * one most confidently misread.
+ *
+ * So the array has to *be* the reply, exactly as a watcher's sentinel has to be
+ * its whole reply. The single exception is a populated array with prose around
+ * it: prose wrapped around real meetings is an agent being chatty, whereas
+ * prose wrapped around an empty array is an agent explaining itself.
+ */
+export function readMeetingPlan(reply: string, now: number = Date.now()): MeetingPlan {
+    const text = reply.trim();
+    if (!text) {
+        return { ok: false, problem: "unreadable", detail: "The scan came back empty." };
+    }
+
+    const whole = parseArray(wholeReplyArray(text));
+    if (whole) return { ok: true, meetings: collectMeetings(whole, now) };
+
+    const embedded = parseArray(embeddedArray(text));
+    if (embedded && embedded.length > 0) {
+        return { ok: true, meetings: collectMeetings(embedded, now) };
+    }
+
+    return {
+        ok: false,
+        problem: describesNoCalendarAccess(text) ? "no-calendar" : "unreadable",
+        detail: summarise(text),
+    };
+}
+
+/**
+ * The meeting list, or an empty one however the scan failed.
+ *
+ * Kept for callers that genuinely only want the meetings. Anything that acts on
+ * "there are none" should read the plan instead, because this cannot tell the
+ * two apart — which is the entire bug.
  */
 export function parseMeetingPlan(reply: string, now: number = Date.now()): Meeting[] {
-    const json = extractJsonArray(reply);
-    if (!json) return [];
+    const plan = readMeetingPlan(reply, now);
+    return plan.ok ? plan.meetings : [];
+}
 
-    let raw: unknown;
-    try {
-        raw = JSON.parse(json);
-    } catch {
-        return [];
-    }
-    if (!Array.isArray(raw)) return [];
+/** What to tell the user, once, when there is no calendar to read. */
+export function calendarUnavailableMessage(detail: string): string {
+    return [
+        "I can't see your calendar, so treat any quiet day from me as unknown rather than clear.",
+        detail ? `The scan said: ${detail}` : "",
+        "Sign in to Outlook, or point me at a calendar MCP server, and heads-ups start again on their own.",
+    ]
+        .filter(Boolean)
+        .join(" ");
+}
 
+function collectMeetings(raw: unknown[], now: number): Meeting[] {
     const meetings: Meeting[] = [];
     for (const entry of raw) {
         const parsed = MeetingSchema.safeParse(entry);
@@ -266,13 +365,44 @@ export function parseMeetingPlan(reply: string, now: number = Date.now()): Meeti
     return meetings.sort((a, b) => a.start - b.start);
 }
 
-/** The outermost `[...]` in a reply, fenced or not. */
-function extractJsonArray(reply: string): string | undefined {
-    const text = reply.trim();
+function parseArray(json: string | undefined): unknown[] | undefined {
+    if (json === undefined) return undefined;
+    try {
+        const raw: unknown = JSON.parse(json);
+        return Array.isArray(raw) ? raw : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+/** The reply, when the reply is nothing but an array — fence allowed. */
+function wholeReplyArray(reply: string): string | undefined {
+    const text = stripFence(reply);
+    return text.startsWith("[") && text.endsWith("]") ? text : undefined;
+}
+
+/** The outermost `[...]` anywhere in a reply. Only trusted when it has content. */
+function embeddedArray(reply: string): string | undefined {
+    const text = stripFence(reply);
     const start = text.indexOf("[");
     const end = text.lastIndexOf("]");
     if (start === -1 || end <= start) return undefined;
     return text.slice(start, end + 1);
+}
+
+/** Unwrap one ```json fence, which is the one bit of decoration agents add. */
+function stripFence(reply: string): string {
+    const text = reply.trim();
+    const fenced = /^```[A-Za-z]*[ \t]*\r?\n([\s\S]*?)\r?\n?```$/.exec(text);
+    return (fenced ? fenced[1] : text).trim();
+}
+
+/** The first sentence of an explanation, short enough to sit in an open item. */
+function summarise(reply: string): string {
+    const flat = reply.replace(/\s+/g, " ").trim();
+    const stop = flat.search(/[.!?](\s|$)/);
+    const first = stop === -1 ? flat : flat.slice(0, stop + 1);
+    return first.length > 200 ? `${first.slice(0, 197)}...` : first;
 }
 
 function toEpoch(value: string | number): number | undefined {
