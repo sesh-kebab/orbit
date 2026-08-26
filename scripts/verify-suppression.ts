@@ -8,7 +8,18 @@
  * agent. Dates are built with the local-time constructor on purpose: the rules
  * are about the user's week, not UTC's.
  */
-import { dailySlotOn, isNothingToReport, makeSchedule, nextAllowedRunFor } from "../src/main/orchestrator/schedules.js";
+import {
+    blindReason,
+    clearBlindRuns,
+    dailySlotOn,
+    isCouldNotCheck,
+    isNothingToReport,
+    makeSchedule,
+    nextAllowedRunFor,
+    noteBlindRun,
+    noteQuietRun,
+    previousRunBlock,
+} from "../src/main/orchestrator/schedules.js";
 import {
     dayKey,
     deriveSuppression,
@@ -449,6 +460,100 @@ const silencedOnAug22 = AUG_22_REPLIES.filter((reply) => isNothingToReport(reply
 check("all four of 22 August's empty runs are silenced", silencedOnAug22 === 4, silencedOnAug22);
 
 console.log(`\nEmpty watcher runs on 22 Aug that now stay out of the chat: ${silencedOnAug22} of ${AUG_22_REPLIES.length}.`);
+
+// MARK: - Telling a blind watcher from a quiet one
+
+/**
+ * The calendar's lesson, generalised. Twenty-eight scans of a dead account
+ * returned `[]`, `[]` means "your day is clear", and so Orbit was reassuring
+ * about a day it could not see. A watcher has the identical hole: asked only
+ * for NOTHING TO REPORT, an agent whose tool is missing has no other phrase.
+ */
+check("the bare blind sentinel", isCouldNotCheck("COULD NOT CHECK"));
+check("lower case", isCouldNotCheck("could not check"));
+check("with a reason after a dash", isCouldNotCheck("COULD NOT CHECK — no mail account is signed in."));
+check("with a reason after a colon", isCouldNotCheck("Could not check: the Graph token was rejected."));
+check("with a reason after a full stop", isCouldNotCheck("Could not check. There is no calendar tool available."));
+check("dressed in bold, as models do", isCouldNotCheck("**COULD NOT CHECK** — the search errored."));
+check("quoted", isCouldNotCheck("> Could not check — no ADO access."));
+
+check("a normal report is not blind", !isCouldNotCheck("Becca is still waiting on your approval."));
+check("silence is not blindness", !isCouldNotCheck("NOTHING TO REPORT"));
+check("an empty reply is not blind", !isCouldNotCheck(""));
+check("a missing reply is not blind", !isCouldNotCheck(undefined));
+check(
+    "the phrase mid-sentence does not make a report blind",
+    !isCouldNotCheck("I could not check the second repo, but the first one is clean and Becca is waiting."),
+);
+check(
+    "a longer verb phrase is not the sentinel",
+    !isCouldNotCheck("Could not checkpoint the branch, so I left it alone."),
+);
+
+check("the reason is carried through", blindReason("COULD NOT CHECK — no mail account is signed in.") === "no mail account is signed in.");
+check("a bare sentinel carries no reason", blindReason("COULD NOT CHECK") === undefined);
+check("a report carries no reason", blindReason("All clear.") === undefined);
+
+/**
+ * The bookkeeping, which is where the real damage was. A quiet run earns a
+ * back-off; if a blind run counted as a quiet one, a watcher that had gone
+ * completely dark would be asked less and less often *because* it was broken,
+ * and the failure would fade out instead of surfacing.
+ */
+const blindWatcher = makeSchedule({
+    title: "Watch the mail",
+    task: "Watch it.",
+    cadence: { kind: "interval", minutes: 45 },
+    quiet: true,
+});
+
+check("the first blind run is worth announcing", noteBlindRun(blindWatcher));
+check("the second is the same sentence again", !noteBlindRun(blindWatcher));
+check("and the third", !noteBlindRun(blindWatcher));
+check("blind runs never earn a back-off", blindWatcher.backoffMinutes === undefined);
+check("nor do they count as quiet", (blindWatcher.quietRuns ?? 0) === 0);
+check("recovery is detected", clearBlindRuns(blindWatcher));
+check("and only once", !clearBlindRuns(blindWatcher));
+check("a recovered watcher can announce again", noteBlindRun(blindWatcher));
+
+/** A quiet watcher, for contrast, does still ease off exactly as before. */
+const quietWatcher = makeSchedule({
+    title: "Watch something dull",
+    task: "Watch it.",
+    cadence: { kind: "interval", minutes: 45 },
+    quiet: true,
+});
+for (let i = 0; i < 6; i += 1) noteQuietRun(quietWatcher);
+check("a genuinely quiet watcher still backs off", quietWatcher.backoffMinutes !== undefined);
+
+/**
+ * And the blind reply must not become the next run's baseline. "Report only
+ * what has changed since COULD NOT CHECK" invites "no change", which is how a
+ * broken source quietly becomes the status quo.
+ */
+const blinded = makeSchedule({
+    title: "Watch the mail",
+    task: "Watch it.",
+    cadence: { kind: "interval", minutes: 45 },
+});
+blinded.lastRunAt = Date.now();
+blinded.lastResult = "COULD NOT CHECK — no mail account is signed in.";
+check("a blind run is not handed on as a baseline", previousRunBlock(blinded) === "");
+blinded.lastResult = "Becca is waiting on your approval.";
+check("a real run still is", previousRunBlock(blinded).includes("Becca"));
+
+/** The orchestrator's decision, stated as it states it. */
+function speaks(status: "done" | "failed" | "cancelled", result: string, firstBlind = true): boolean {
+    if (status === "cancelled") return false;
+    if (status === "done" && isCouldNotCheck(result)) return firstBlind;
+    if (status === "done" && isNothingToReport(result)) return false;
+    return true;
+}
+
+check("a blind watcher speaks up the first time", speaks("done", "COULD NOT CHECK — no mail tool."));
+check("but not the thirtieth", !speaks("done", "COULD NOT CHECK — no mail tool.", false));
+check("a quiet watcher still says nothing", !speaks("done", "NOTHING TO REPORT"));
+check("a watcher with news still speaks", speaks("done", "Becca is waiting."));
 
 // MARK: - Report
 

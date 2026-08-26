@@ -237,8 +237,64 @@ const NOTHING_TO_REPORT = "nothing to report";
  * blockquote marker, and closing punctuation.
  */
 export function isNothingToReport(result: string | undefined): boolean {
-    if (!result) return false;
-    const bare = result
+    return undress(result) === NOTHING_TO_REPORT;
+}
+
+/**
+ * The reply a watcher sends when it could not look.
+ *
+ * A failed source must never read like an empty one. The calendar taught this
+ * the expensive way: twenty-eight scans of a dead account returned `[]`, and
+ * `[]` means "your day is clear", so Orbit said so — confidently, all day.
+ *
+ * A watcher has exactly the same hole. Asked for `NOTHING TO REPORT` when there
+ * is nothing worth raising, an agent whose mail tool is missing has no other
+ * phrase available and reasonably reaches for that one. Orbit then records a
+ * quiet run, and quiet runs earn a back-off — so a watcher that can see nothing
+ * at all is rewarded by being asked less and less often, and the failure gets
+ * quieter as it gets worse.
+ *
+ * So there is a second sentinel, and the brief offers it. "I could not check"
+ * now has somewhere to go that is not "nothing to report".
+ */
+const COULD_NOT_CHECK = "could not check";
+
+/**
+ * Did this reply open by saying it could not look?
+ *
+ * Unlike the silence sentinel this is a prefix match, because the reply is
+ * *asked* to carry a reason after it — the reason is the whole point. Requiring
+ * the bare phrase would throw away the sentence that says what broke.
+ */
+export function isCouldNotCheck(result: string | undefined): boolean {
+    const bare = undress(result);
+    if (bare === undefined) return false;
+    if (bare === COULD_NOT_CHECK) return true;
+    if (!bare.startsWith(COULD_NOT_CHECK)) return false;
+    // "could not check" must end the clause, not start a longer verb phrase:
+    // "could not check anything until Monday" is the sentinel with a reason,
+    // "could not checkpoint the branch" is not the sentinel at all.
+    // The delimiter may be punctuation, a dash, or the closing half of a
+    // markdown wrapper around the sentinel alone ("**COULD NOT CHECK** — ...").
+    return /^[\s:;,.\u2014*_`-]/.test(bare.slice(COULD_NOT_CHECK.length));
+}
+
+/** The reason a blind run gave, if it gave one beyond the sentinel itself. */
+export function blindReason(result: string | undefined): string | undefined {
+    if (!isCouldNotCheck(result)) return undefined;
+    const bare = (result ?? "").trim();
+    const after = bare.slice(bare.toLowerCase().indexOf(COULD_NOT_CHECK) + COULD_NOT_CHECK.length);
+    const reason = after.replace(/^[\s:;,.\u2014*_`-]+/, "").trim();
+    return reason.length > 0 ? reason : undefined;
+}
+
+/**
+ * Strip the dressing a model puts around a one-line answer, and lower-case it.
+ * Shared so both sentinels forgive exactly the same things.
+ */
+function undress(result: string | undefined): string | undefined {
+    if (!result) return undefined;
+    return result
         .trim()
         .replace(/^>\s*/, "")
         .replace(/^[*_`]+/, "")
@@ -246,7 +302,6 @@ export function isNothingToReport(result: string | undefined): boolean {
         .replace(/[.!…\s]+$/, "")
         .trim()
         .toLowerCase();
-    return bare === NOTHING_TO_REPORT;
 }
 
 /**
@@ -286,6 +341,29 @@ export function clearBackoff(schedule: Schedule): boolean {
 }
 
 /**
+ * Record a run that could not look at all.
+ *
+ * Deliberately *not* a quiet run. A quiet run is evidence the watcher is dull
+ * and earns it a longer leash; a blind run is evidence of nothing except that
+ * something is broken, and stretching the interval would slow down the only
+ * thing that can discover the fix. So the back-off is left exactly where it is.
+ *
+ * Returns true when this is the first blind run in a row — the one worth saying
+ * out loud. Every one after that is the same sentence again.
+ */
+export function noteBlindRun(schedule: Schedule): boolean {
+    schedule.blindRuns = (schedule.blindRuns ?? 0) + 1;
+    return schedule.blindRuns === 1;
+}
+
+/** A run that could see again. Returns true when it ends a blind spell. */
+export function clearBlindRuns(schedule: Schedule): boolean {
+    const wasBlind = (schedule.blindRuns ?? 0) > 0;
+    schedule.blindRuns = 0;
+    return wasBlind;
+}
+
+/**
  * The baseline block handed to a watcher's next run.
  *
  * Every tick spawns a fresh agent, so "tell me what changed" is unanswerable
@@ -294,6 +372,11 @@ export function clearBackoff(schedule: Schedule): boolean {
 export function previousRunBlock(schedule: Schedule): string {
     const previous = schedule.lastResult?.trim();
     if (!previous) return "";
+    // A run that could not look is no baseline. Handing "COULD NOT CHECK — no
+    // mail account" to the next run as the thing to report changes against
+    // invites it to answer "no change", which is the failure quietly becoming
+    // the status quo.
+    if (isCouldNotCheck(previous)) return "";
 
     const body =
         previous.length > PREVIOUS_RESULT_CAP
@@ -332,6 +415,7 @@ export function makeSchedule(input: {
         runCount: 0,
         quiet: input.quiet ?? false,
         quietRuns: 0,
+        blindRuns: 0,
         archived: false,
         runDays: input.runDays,
         skipOnLeave: input.skipOnLeave,

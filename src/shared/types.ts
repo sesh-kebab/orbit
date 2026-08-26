@@ -138,7 +138,22 @@ export interface Schedule {
      */
     lastSlotAt?: number;
     lastResult?: string;
-    lastStatus?: "done" | "failed" | "cancelled";
+    /**
+     * How the last run ended.
+     *
+     * `blind` is not a kind of `done`. The agent finished and answered, but the
+     * answer was "I could not look" — a missing tool, an errored search, an
+     * account nobody is signed in to. It is kept apart from `done` because the
+     * two must never be treated alike: a watcher that cannot see is not a
+     * watcher that saw nothing, and only one of them is reassuring.
+     */
+    lastStatus?: "done" | "failed" | "cancelled" | "blind";
+    /**
+     * Consecutive runs that ended `blind`. The first one is worth saying out
+     * loud; the thirtieth is the same sentence again, so it is counted and not
+     * repeated. Cleared the moment a run can see again.
+     */
+    blindRuns?: number;
     runCount: number;
     /** Agent currently executing this schedule, if any. */
     activeAgentId?: string;
