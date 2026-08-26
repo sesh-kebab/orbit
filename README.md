@@ -296,6 +296,12 @@ now, inspect the last report, archive or delete them.
 - `once` watchers **archive themselves** after they fire and report.
 - *Quiet* watchers are told to reply `NOTHING TO REPORT` on an uneventful run, and Orbit
   swallows those.
+- **A watcher that could not look is not a watcher that saw nothing.** Every watcher is also
+  offered `COULD NOT CHECK`, plus a reason, for when the tool it needed was missing or the
+  search errored. That reply is never mistaken for silence: it does not earn the quiet-run
+  back-off (a broken watcher must not get asked less often *because* it is broken), it is
+  not handed to the next run as a baseline to report changes against, and it is said out
+  loud once — then held until the watcher can see again.
 - **Archiving** is the non-destructive tidy-up: run count and last report stay on disk, the
   watcher drops out of the list and never runs again. Restore it from *show archived*.
 

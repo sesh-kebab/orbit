@@ -68,16 +68,20 @@ import {
     DAILY_BRIEF_TEMPLATE,
     catchUpDecision,
     clearBackoff,
+    clearBlindRuns,
+    blindReason,
     describeCadence,
     describeSchedule,
     isArchived,
     isBackedOff,
+    isCouldNotCheck,
     isNothingToReport,
     isRunnable,
     isValidTime,
     localDay,
     makeSchedule,
     nextAllowedRunFor,
+    noteBlindRun,
     noteQuietRun,
     previousRunBlock,
     ranSlot,
@@ -1455,6 +1459,16 @@ export class Orchestrator {
             agent.status === "done" &&
             isNothingToReport(agent.result);
 
+        // A run that finished but could not see. Kept apart from both "done"
+        // and "failed": the agent did its job, the source did not.
+        const blind =
+            schedule !== undefined && agent.status === "done" && isCouldNotCheck(agent.result);
+
+        // Say it the first time it happens, then stop. A watcher blind at every
+        // tick would otherwise repeat one sentence 32 times a day, which is how
+        // a real problem trains the user to ignore it.
+        let announceBlind = false;
+
         if (schedule) {
             this.store.update((state) => {
                 const target = state.schedules.find((s) => s.id === schedule.id);
@@ -1466,11 +1480,23 @@ export class Orchestrator {
                         ? "failed"
                         : agent.status === "cancelled"
                           ? "cancelled"
-                          : "done";
+                          : blind
+                            ? "blind"
+                            : "done";
 
                 // A failed or cancelled run says nothing about how interesting
                 // the watcher is, so it neither earns nor clears a back-off.
                 if (agent.status !== "done") return;
+
+                // Nor does a blind one — and it must not be mistaken for a
+                // quiet one, or a watcher that can see nothing would be asked
+                // less and less often precisely because it is broken.
+                if (blind) {
+                    announceBlind = noteBlindRun(target);
+                    return;
+                }
+
+                const recovered = clearBlindRuns(target);
 
                 // A one-off has now said its piece. Retiring it here — rather
                 // than leaving a dead `enabled: false` row behind — keeps the
@@ -1483,7 +1509,7 @@ export class Orchestrator {
                 }
 
                 const rescheduled = nothingToReport ? noteQuietRun(target) : clearBackoff(target);
-                if (rescheduled && isRunnable(target) && target.cadence.kind === "interval") {
+                if ((rescheduled || recovered) && isRunnable(target) && target.cadence.kind === "interval") {
                     target.nextRunAt = nextAllowedRunFor(target, state.leave);
                 }
             });
@@ -1491,6 +1517,22 @@ export class Orchestrator {
         }
 
         if (agent.status === "cancelled") {
+            this.store.flush();
+            return;
+        }
+
+        // Blind runs after the first are swallowed. The first one is not: it is
+        // pushed as its own message so the user learns the watcher has gone
+        // dark rather than reading its silence as good news.
+        if (blind) {
+            if (announceBlind && schedule) {
+                const reason = blindReason(agent.result);
+                this.pushMessage({
+                    role: "system",
+                    text: `Watcher "${schedule.title}" could not check${reason ? `: ${reason}` : "."} Treat its silence as unknown, not clear — it will keep trying.`,
+                    kind: { type: "completion", agentId },
+                });
+            }
             this.store.flush();
             return;
         }
@@ -1884,6 +1926,18 @@ export class Orchestrator {
                 "If there is genuinely nothing worth interrupting the user for, reply with exactly: NOTHING TO REPORT",
             );
         }
+        // Every watcher gets this, quiet or not. Without somewhere to put "I
+        // could not look", an agent that has lost its tool reaches for the
+        // silence sentinel — and silence is indistinguishable from all-clear.
+        parts.push(
+            [
+                "If you could not actually check — a tool you needed is missing, a search errored,",
+                "an account is not signed in — do NOT reply NOTHING TO REPORT and do not guess.",
+                "Begin your reply with exactly: COULD NOT CHECK",
+                "followed by one short sentence saying what stopped you. Reporting nothing found is",
+                "only honest when you were able to look.",
+            ].join("\n"),
+        );
         const task = parts.filter(Boolean).join("\n\n");
         const spawned = this.spawnAgent(schedule.title, task, undefined, {
             scheduleId: schedule.id,
