@@ -6,6 +6,7 @@ import type {
     PermissionRequest,
     PermissionRequestResult,
     SessionConfig,
+    Tool,
 } from "@github/copilot-sdk";
 
 // The SDK doesn't re-export these handler payload types, so derive them.
@@ -34,6 +35,14 @@ export interface AgentRunnerHooks {
     ask: AskFn;
     getSettings(): Settings;
     getMcpServers(): Record<string, MCPServerConfig>;
+    /**
+     * The subset of Orbit's own tools this agent may call. Without it an agent
+     * can do the work but cannot record that it did any of it. Typed as the SDK
+     * types its own `tools` option: `Tool<T>` is invariant in `T`, so a list of
+     * differently-parameterised tools has no narrower common type.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    getAgentTools(): Tool<any>[];
     onUsage(input: number, output: number): void;
     onToolCall(): void;
     onFinished(agent: AgentView): void;
@@ -84,6 +93,13 @@ export class AgentRunner {
                 mcpServers: this.hooks.getMcpServers(),
                 onPermissionRequest: (request) => this.handlePermission(request),
                 onUserInputRequest: (request) => this.handleQuestion(request),
+                // Orbit's bookkeeping tools, so an agent writes through the
+                // running app rather than editing its state files on disk
+                // underneath it. `availableTools` is left unset: a tool is
+                // enabled when it matches that filter or the filter is absent,
+                // so these are live without also having to restate the built-in
+                // file and shell tools the agent needs to do the work.
+                tools: this.hooks.getAgentTools(),
             });
             this.session = session;
 

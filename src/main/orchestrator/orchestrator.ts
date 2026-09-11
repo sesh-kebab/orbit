@@ -9,6 +9,7 @@ import {
     type GetAuthStatusResponse,
     type MCPServerConfig,
     type PermissionRequestResult,
+    type Tool,
 } from "@github/copilot-sdk";
 import { z } from "zod";
 import type {
@@ -45,6 +46,7 @@ import type { InteractionRecord, LoggedToolCall, Persistence, SessionSnapshot } 
 import { findCopilotCli, missingCliMessage } from "../runtime.js";
 import type { Store } from "../store.js";
 import { AgentRunner } from "./agentRunner.js";
+import { selectAgentTools } from "./agentTools.js";
 import { artifactPathsIn, artifactSearchDirs, resolveArtifactPaths } from "./artifacts.js";
 import { parseChoices, stripChoicesForStream } from "./choices.js";
 import { clip, elapsed, summarise } from "./describe.js";
@@ -1110,6 +1112,25 @@ export class Orchestrator {
         ];
     }
 
+    /**
+     * The slice of the above an agent gets. Agents run in this same process, so
+     * a tool call from an agent mutates the very arrays Orbit is holding: that
+     * is the point. The alternative, which is what happened for four nights
+     * running, is an agent editing proposals.json and open-items.json on disk
+     * while the app that owns them has them in memory and overwrites on its
+     * next save.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    private agentTools(): Tool<any>[] {
+        const { tools, missing } = selectAgentTools(this.orbitTools());
+        if (missing.length > 0) {
+            // A renamed tool, not a missing feature. Loud, but not fatal: the
+            // agent is still better off with the rest than with none.
+            console.warn(`[orbit] agent tool allowlist names tools that no longer exist: ${missing.join(", ")}`);
+        }
+        return tools;
+    }
+
     // MARK: - Chat
 
     async send(prompt: string): Promise<void> {
@@ -1338,6 +1359,7 @@ export class Orchestrator {
             ask: (request) => this.ask(request),
             getSettings: () => this.settings,
             getMcpServers: () => this.mcpServers,
+            getAgentTools: () => this.agentTools(),
             onToolCall: () =>
                 this.store.update((state) => {
                     state.usage.toolCalls += 1;

@@ -34,3 +34,11 @@ jobs:
       # `npm run build` is typecheck (all three tsconfigs) then electron-vite.
       - name: Build
         run: npm run build
+
+      # The behavioural suites. These are the checks a compiler cannot make:
+      # silence rules, calendar reading, the activity ledger, board judgement,
+      # build freshness and which tools an agent is handed. They ran only by
+      # hand until now, which meant a regression in any of them reached the
+      # running app before anything went red.
+      - name: Verify
+        run: npm run verify

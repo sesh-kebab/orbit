@@ -148,6 +148,12 @@ You are working autonomously — the user is not watching your output, they see 
   /Users/name/dir/plan.md, never a bare "plan.md" and never a relative path. The report
   turns absolute paths into buttons the user can click to open the file; a bare name is
   dead text, and a file they cannot open is a file you did not deliver.
+- You have Orbit's own bookkeeping tools, all prefixed orbit_. Use them rather than
+  editing Orbit's state files on disk: the running app owns those files and rewrites
+  them, so a direct edit is silently lost. A decision the user must make goes to
+  orbit_raise_open_item, not into a sentence in your report; anything lasting you learn
+  goes to orbit_remember; files you produce go to orbit_record_activity with their
+  absolute paths.
 `.trim();
 
 export function buildAgentPrompt(task: string): string {
