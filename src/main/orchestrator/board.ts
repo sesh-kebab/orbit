@@ -36,6 +36,7 @@ import type {
     ActivityEntry,
     AgentView,
     Board,
+    BoardArtifact,
     BoardThread,
     CallKind,
     ChiefCall,
@@ -77,6 +78,26 @@ export const LEAVE_LOOKAHEAD_MS = 3 * DAY;
 /** Orbit's own ceiling on concurrent agents, mirrored so capacity can be judged. */
 export const MAX_LIVE_AGENTS = 8;
 
+/**
+ * How many artifacts cross the wire.
+ *
+ * A cap rather than everything, because the point of the list is finding the
+ * thing he half remembers from last week, and nothing about scrolling to page
+ * four serves that. The ledger keeps the rest, and it is searchable by tool.
+ */
+export const ARTIFACT_LIMIT = 40;
+
+/** Files shown on a single thread row. Beyond this it is a directory listing. */
+export const ARTIFACTS_PER_THREAD = 3;
+
+/**
+ * How long something can sit unopened before it is worth a word.
+ *
+ * A full day, so it never fires on something delivered this morning that he is
+ * simply going to read after standup.
+ */
+export const UNOPENED_STALE_MS = 24 * HOUR;
+
 /** Everything the board is derived from, with no opinion about where it came from. */
 export interface BoardFacts {
     agents: AgentView[];
@@ -103,11 +124,14 @@ export interface BoardFacts {
 
 export function deriveBoard(facts: BoardFacts, now: number): Board {
     const threads = deriveThreads(facts, now);
+    const artifacts = deriveArtifacts(facts, threads);
+    attachArtifacts(threads, artifacts);
     return {
         at: now,
         threads,
-        calls: deriveCalls(facts, threads, now),
-        blindSpots: deriveBlindSpots(facts, threads),
+        artifacts,
+        calls: deriveCalls(facts, threads, artifacts, now),
+        blindSpots: deriveBlindSpots(facts, threads, artifacts),
     };
 }
 
@@ -295,7 +319,10 @@ function deliveryDetail(entry: ActivityEntry, lane: ThreadLane): string {
     if (entry.note) return entry.note;
     if (lane === "you") return "Sitting with you.";
     if (lane === "stuck") return "Stopped, and nobody chose to stop it.";
-    return entry.location ? shortLocation(entry.location) : "Delivered.";
+    // Not the path, even though there usually is one. The artifact hangs off
+    // this row already and carries the path as its own clickable line, so
+    // repeating it here printed the same string twice under one title.
+    return "Delivered.";
 }
 
 /**
@@ -320,6 +347,77 @@ export function threadsInLane(threads: BoardThread[], lane: ThreadLane): BoardTh
     return threads.filter((thread) => thread.lane === lane);
 }
 
+// MARK: - Half one and a half, the things it made
+
+/**
+ * Every file Orbit produced, newest first.
+ *
+ * The complaint this answers is not that artifacts go unrecorded. The ledger has
+ * been recording each one with an absolute path, the request behind it, a day
+ * and a status all along. The failure was that the only pointer a human ever saw
+ * was a path inside a chat message, which stops existing the moment the
+ * conversation scrolls. So nothing new is stored here and nothing is inferred:
+ * this is the ledger, read in the one order that helps when he cannot remember
+ * which piece of work produced the thing he is looking for.
+ *
+ * Abandoned work is excluded. Its file may well still be on disk, but offering
+ * it next to live output invites him to act on something already dropped.
+ */
+export function deriveArtifacts(facts: BoardFacts, threads: BoardThread[]): BoardArtifact[] {
+    const artifacts: BoardArtifact[] = [];
+    for (const entry of facts.activity) {
+        if (!entry.location) continue;
+        if (entry.status === "abandoned") continue;
+
+        const external = /^https?:\/\//i.test(entry.location);
+        artifacts.push({
+            id: entry.id,
+            title: entry.description,
+            location: entry.location,
+            shortLocation: external ? entry.location : shortLocation(entry.location),
+            external,
+            at: entry.at,
+            kind: entry.kind,
+            request: entry.request,
+            opened: entry.openedAt !== undefined,
+            threadId: threadFor(entry, threads),
+        });
+    }
+    return artifacts.sort((a, b) => b.at - a.at).slice(0, ARTIFACT_LIMIT);
+}
+
+/**
+ * Which thread produced an artifact, when one is still on the board.
+ *
+ * The entry's own delivery row is the better answer where it exists, because it
+ * is the row describing this exact piece of work. Falling back to the agent is
+ * what links a report to the code review that wrote it once the delivery row has
+ * aged out of the lanes.
+ */
+function threadFor(entry: ActivityEntry, threads: BoardThread[]): string | undefined {
+    const own = threads.find((thread) => thread.activityId === entry.id);
+    if (own) return own.id;
+    if (!entry.agentId) return undefined;
+    return threads.find((thread) => thread.kind === "agent" && thread.agentId === entry.agentId)?.id;
+}
+
+/**
+ * Hang each artifact off the thread that made it.
+ *
+ * A thread has two halves and he needs both from one row: where it got to, and
+ * what came out of it. Capped per thread because a row that unfolds into twenty
+ * files is a directory listing, and he has one of those already.
+ */
+function attachArtifacts(threads: BoardThread[], artifacts: BoardArtifact[]): void {
+    for (const artifact of artifacts) {
+        if (!artifact.threadId) continue;
+        const thread = threads.find((candidate) => candidate.id === artifact.threadId);
+        if (!thread) continue;
+        thread.artifacts ??= [];
+        if (thread.artifacts.length < ARTIFACTS_PER_THREAD) thread.artifacts.push(artifact);
+    }
+}
+
 // MARK: - Half two, the judgement
 
 /**
@@ -329,10 +427,16 @@ export function threadsInLane(threads: BoardThread[], lane: ThreadLane): BoardTh
  * unforgivable to have buried. Anything on a timer outranks anything merely
  * old, because the timer will fire whether or not he looks.
  */
-export function deriveCalls(facts: BoardFacts, threads: BoardThread[], now: number): ChiefCall[] {
+export function deriveCalls(
+    facts: BoardFacts,
+    threads: BoardThread[],
+    artifacts: BoardArtifact[],
+    now: number,
+): ChiefCall[] {
     return [
         ...exposureCalls(facts, threads, now),
         ...decayCalls(threads, now),
+        ...unopenedCalls(artifacts, now),
         ...leverageCalls(facts, threads, now),
         ...anticipationCalls(facts, threads, now),
         ...capacityCalls(facts, now),
@@ -534,6 +638,49 @@ function decayCalls(threads: BoardThread[], now: number): ChiefCall[] {
     }
 
     return calls;
+}
+
+/**
+ * Work he asked for, delivered, and apparently never looked at.
+ *
+ * This is the decay case the artifact list makes visible for the first time.
+ * Something he requested was produced and then went unread, which means the time
+ * spent making it bought nothing, and the longer it sits the less true it gets.
+ *
+ * It is `likely` and can never be better, because `openedAt` only records opens
+ * that went through Orbit. If he opened the file straight from his editor there
+ * is no trace, and the call would be wrong. The copy says so rather than hiding
+ * it, and the threshold is a full day so that this never fires on something he
+ * simply has not got to yet this morning.
+ */
+function unopenedCalls(artifacts: BoardArtifact[], now: number): ChiefCall[] {
+    const forgotten = artifacts.filter(
+        (artifact) => !artifact.opened && now - artifact.at >= UNOPENED_STALE_MS,
+    );
+    if (forgotten.length === 0) return [];
+
+    const oldest = forgotten.reduce((a, b) => (a.at <= b.at ? a : b));
+    const age = now - oldest.at;
+    const others = forgotten.length - 1;
+    return [
+        call({
+            id: "decay:unopened",
+            kind: "decay",
+            headline:
+                others > 0
+                    ? `Open "${clip(oldest.title, 40)}" and ${others} other unread thing${others === 1 ? "" : "s"}`
+                    : `Open "${clip(oldest.title, 50)}", made for you ${describeSpan(age)} ago`,
+            because: [
+                `You asked for this and it has sat unopened for ${describeSpan(age)}.`,
+                "It is in the made-for-you list below, one click from here.",
+                "Orbit only sees opens that go through it, so this may already be read.",
+            ],
+            confidence: "likely",
+            basis: "Opens made from Orbit are recorded; opens made in your editor are invisible to it.",
+            minutes: 5,
+            weight: 260 + Math.min(age / DAY, 20) + Math.min(others * 4, 20),
+        }),
+    ];
 }
 
 /**
@@ -761,7 +908,11 @@ function capacityCalls(facts: BoardFacts, now: number): ChiefCall[] {
  * recorded who is owed what, and that reads identically to nobody owing him
  * anything.
  */
-export function deriveBlindSpots(facts: BoardFacts, threads: BoardThread[]): string[] {
+export function deriveBlindSpots(
+    facts: BoardFacts,
+    threads: BoardThread[],
+    artifacts: BoardArtifact[],
+): string[] {
     const spots: string[] = [];
 
     if (facts.calendarProblem) {
@@ -783,6 +934,13 @@ export function deriveBlindSpots(facts: BoardFacts, threads: BoardThread[]): str
     const blindWatchers = facts.schedules.filter((s) => !s.archived && (s.blindRuns ?? 0) > 0).length;
     if (blindWatchers > 0) {
         spots.push(`${blindWatchers} watcher${blindWatchers === 1 ? " is" : "s are"} reporting blind, so their silence proves nothing.`);
+    }
+
+    // The read markers are the weakest claim on the board, so the moment any of
+    // them is being shown, their limit is stated. Without this line a row with
+    // no dot reads as "you have read this", which Orbit has no way of knowing.
+    if (artifacts.some((artifact) => !artifact.opened)) {
+        spots.push("Unread marks count only opens made from Orbit. Files opened in your editor still look unread.");
     }
 
     return spots;
@@ -840,9 +998,17 @@ function firstLine(text: string | undefined): string | undefined {
     return line ? clip(line.trim(), 90) : undefined;
 }
 
+/**
+ * The tail of a path, with one directory of context.
+ *
+ * A bare file name is not enough to tell two `review.md` files apart, and he has
+ * several repositories with the same folder layout. The parent directory is
+ * almost always the disambiguating half, and it is the most that fits.
+ */
 function shortLocation(location: string): string {
-    const parts = location.replace(/\/+$/, "").split("/");
-    return parts[parts.length - 1] || location;
+    const parts = location.replace(/\/+$/, "").split("/").filter(Boolean);
+    if (parts.length === 0) return location;
+    return parts.slice(-2).join("/");
 }
 
 export function clip(text: string, max: number): string {

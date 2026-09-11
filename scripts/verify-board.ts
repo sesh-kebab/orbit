@@ -16,6 +16,8 @@
  * quietly break them.
  */
 import {
+    ARTIFACTS_PER_THREAD,
+    ARTIFACT_LIMIT,
     DECISION_STALE_MS,
     DENY_WARN_MS,
     LANDED_WINDOW_MS,
@@ -31,6 +33,7 @@ import {
     threadsInLane,
     type BoardFacts,
 } from "../src/main/orchestrator/board.js";
+import { shortSpan } from "../src/renderer/mood.js";
 import type {
     ActivityEntry,
     AgentView,
@@ -539,11 +542,163 @@ const competing = board({
 });
 check("what is on a timer is read first", competing.calls[0].kind, "exposure");
 
-// MARK: - Blind spots, which is the honesty
+// MARK: - What it made for him
 
+function file(patch: Partial<ActivityEntry> = {}): ActivityEntry {
+    return entry({
+        id: "art-1",
+        kind: "artifact_written",
+        description: "Code review of the payments refactor",
+        location: "/Users/seshi/code/lattice/docs/payments-review.md",
+        request: "review the payments refactor",
+        status: "delivered",
+        at: NOW - 2 * DAY,
+        ...patch,
+    });
+}
+
+check("an entry with a file becomes an artifact", board({ activity: [file()] }).artifacts.length, 1);
+check(
+    "an entry with nothing to open does not",
+    board({ activity: [entry({ location: undefined })] }).artifacts.length,
+    0,
+);
+// Its file may well still be on disk, but offering it beside live output invites
+// acting on something already dropped.
+check(
+    "abandoned work is not offered",
+    board({ activity: [file({ status: "abandoned" })] }).artifacts.length,
+    0,
+);
+check(
+    "newest first, because recency is the only order that helps here",
+    board({
+        activity: [
+            file({ id: "old", description: "Older", at: NOW - 9 * DAY }),
+            file({ id: "new", description: "Newer", at: NOW - HOUR }),
+        ],
+    }).artifacts.map((artifact) => artifact.title),
+    ["Newer", "Older"],
+);
+check(
+    "the path is shortened for a narrow panel",
+    board({ activity: [file()] }).artifacts[0].shortLocation,
+    "docs/payments-review.md",
+);
+check(
+    "a URL is left whole and flagged as external",
+    board({ activity: [file({ location: "https://example.com/notes" })] }).artifacts[0].external,
+    true,
+);
+check("a path on disk is not external", board({ activity: [file()] }).artifacts[0].external, false);
+check(
+    "the id is the ledger's, so marking it opened finds it again",
+    board({ activity: [file({ id: "act-77" })] }).artifacts[0].id,
+    "act-77",
+);
+check("an artifact nobody has opened says so", board({ activity: [file()] }).artifacts[0].opened, false);
+check(
+    "and one he opened through Orbit says that",
+    board({ activity: [file({ openedAt: NOW - HOUR })] }).artifacts[0].opened,
+    true,
+);
+check(
+    "the list is capped rather than endless",
+    board({
+        activity: Array.from({ length: 60 }, (_, index) =>
+            file({ id: `art-${index}`, at: NOW - index * HOUR }),
+        ),
+    }).artifacts.length,
+    ARTIFACT_LIMIT,
+);
+
+// The half that makes this the same view rather than a second one: a thread
+// carries both where it got to and what came out of it.
+const producing = board({
+    agents: [agent({ id: "agent-9", status: "done", endedAt: NOW - HOUR, result: "Reviewed." })],
+    activity: [file({ agentId: "agent-9", at: NOW - 3 * DAY })],
+});
+const producer = producing.threads.find((thread) => thread.kind === "agent")!;
+check("a thread carries what it produced", producer.artifacts?.length, 1);
+check("and the artifact points back at it", producing.artifacts[0].threadId, producer.id);
+check(
+    "a thread that produced nothing carries nothing",
+    board({ agents: [agent()] }).threads[0].artifacts,
+    undefined,
+);
+// The entry's own delivery row describes this exact piece of work, so it is a
+// better parent than the agent that happened to run it.
+const bothRows = board({
+    agents: [agent({ id: "agent-9" })],
+    activity: [file({ agentId: "agent-9", status: "awaiting_seshi" })],
+});
+check(
+    "the delivery row wins over the agent that made it",
+    bothRows.artifacts[0].threadId,
+    "delivery:art-1",
+);
+check(
+    "an orphan artifact is still listed, just unparented",
+    board({ activity: [file({ agentId: "agent-gone", status: "delivered", at: NOW - 3 * DAY })] })
+        .artifacts[0].threadId,
+    undefined,
+);
+check(
+    "no thread shows more than a handful of files",
+    board({
+        agents: [agent({ id: "agent-9", status: "done", endedAt: NOW - HOUR, result: "Done." })],
+        activity: Array.from({ length: 9 }, (_, index) =>
+            file({ id: `art-${index}`, agentId: "agent-9", at: NOW - (index + 1) * DAY }),
+        ),
+    }).threads.find((thread) => thread.kind === "agent")!.artifacts!.length,
+    ARTIFACTS_PER_THREAD,
+);
+
+// MARK: - Work he asked for and never read
+
+const unread = board({ activity: [file({ at: NOW - 4 * DAY })] });
+const unreadCall = unread.calls.find((call) => call.id === "decay:unopened")!;
+ok("something delivered and never opened is raised", unreadCall !== undefined);
+// It can never be better than likely: Orbit sees only opens that went through
+// it, so a file he read in his editor looks identical to one he ignored.
+check("and it is never better than likely", unreadCall.confidence, "likely");
+ok(
+    "the copy admits he may have read it elsewhere",
+    unreadCall.because.some((line) => line.includes("only sees opens that go through it")),
+);
+check(
+    "something opened is not nagged about",
+    board({ activity: [file({ at: NOW - 4 * DAY, openedAt: NOW - 3 * DAY })] }).calls.filter(
+        (call) => call.id === "decay:unopened",
+    ).length,
+    0,
+);
+check(
+    "something delivered this morning is not nagged about either",
+    board({ activity: [file({ at: NOW - 2 * HOUR })] }).calls.filter((call) => call.id === "decay:unopened")
+        .length,
+    0,
+);
+// One call for the pile, not one per file, or the judgement becomes the
+// inventory it exists to replace.
+const pile = board({
+    activity: [
+        file({ id: "f1", description: "One", at: NOW - 6 * DAY }),
+        file({ id: "f2", description: "Two", at: NOW - 5 * DAY }),
+        file({ id: "f3", description: "Three", at: NOW - 4 * DAY }),
+    ],
+});
+check("a pile of unread work is one call", pile.calls.filter((c) => c.id === "decay:unopened").length, 1);
+ok("and it leads with the oldest", pile.calls.find((c) => c.id === "decay:unopened")!.headline.includes("One"));
+ok(
+    "and counts the rest",
+    pile.calls.find((c) => c.id === "decay:unopened")!.headline.includes("2 other"),
+);
+
+// MARK: - Blind spots, which is the honesty
 check(
     "an unreadable calendar is said out loud",
-    deriveBlindSpots(facts({ calendarProblem: "No account is signed in." }), []).some((spot) =>
+    deriveBlindSpots(facts({ calendarProblem: "No account is signed in." }), [], []).some((spot) =>
         spot.includes("No calendar"),
     ),
     true,
@@ -552,7 +707,7 @@ check(
 // "nothing could be looked at", and only one of those is good news.
 ok(
     "an empty others lane is explained rather than left to speak for itself",
-    deriveBlindSpots(facts(), []).some((spot) => spot.includes("owing you")),
+    deriveBlindSpots(facts(), [], []).some((spot) => spot.includes("owing you")),
 );
 ok(
     "a board that counted leverage admits the graph is partial",
@@ -570,6 +725,18 @@ ok(
     "once somebody owes him something the others lane stops being explained",
     !board({ activity: [entry({ waitingOn: "Priya" })] }).blindSpots.some((spot) =>
         spot.includes("owing you"),
+    ),
+);
+// Without this line a row with no unread dot reads as "you have read this",
+// which is precisely what Orbit cannot know.
+ok(
+    "the limit of the unread marks is stated wherever they are shown",
+    unread.blindSpots.some((spot) => spot.includes("opens made from Orbit")),
+);
+ok(
+    "and not stated when there is nothing unread to mislead him",
+    !board({ activity: [file({ openedAt: NOW - HOUR })] }).blindSpots.some((spot) =>
+        spot.includes("opens made from Orbit"),
     ),
 );
 
@@ -594,6 +761,8 @@ const everyCall: ChiefCall[] = [
     beforeLeave,
     full,
     competing,
+    unread,
+    pile,
 ].flatMap((result) => result.calls);
 
 ok("the fixtures actually exercise the generators", everyCall.length >= 10);
@@ -642,7 +811,7 @@ check(
     everyCall
         .filter((call) => call.threadId)
         .filter((call) => {
-            const source = [denying, capping, blind, oldDecision, staleResult, leverage, meetingSoon, dailySoon, full, competing].find(
+            const source = [denying, capping, blind, oldDecision, staleResult, leverage, meetingSoon, dailySoon, full, competing, unread, pile].find(
                 (result) => result.calls.some((candidate) => candidate.id === call.id),
             );
             return !source!.threads.some((thread) => thread.id === call.threadId);
@@ -660,8 +829,19 @@ check("long spans switch to days", describeSpan(4 * DAY), "4 days");
 check("a moment already past is now", describeWhen(NOW - HOUR, NOW), "now");
 check("and one ahead is relative", describeWhen(NOW + 2 * HOUR, NOW), "in 2 hours");
 
-check("short text is left alone", clip("Fine as it is", 40), "Fine as it is");
-check("long text is cut", clip("x".repeat(50), 10).length, 10);
+// The board's clock column. One unit, and it has to roll over into days: a
+// decision that has waited nine days used to render as "216h 0m", which is
+// wider than the column it sits in.
+check("a fresh moment is now", shortSpan(NOW - 10_000, NOW), "now");
+check("minutes while there are minutes", shortSpan(NOW - 25 * MINUTE, NOW), "25m");
+check("then hours", shortSpan(NOW - 5 * HOUR, NOW), "5h");
+check("then days, rather than three digits of hours", shortSpan(NOW - 9 * DAY, NOW), "9d");
+check("then weeks", shortSpan(NOW - 40 * DAY, NOW), "6w");
+check("a moment in the future reads the same as one in the past", shortSpan(NOW + 2 * HOUR, NOW), "2h");
+check("the boundary into hours does not print 60m", shortSpan(NOW - 60 * MINUTE, NOW), "1h");
+check("the boundary into days does not print 24h", shortSpan(NOW - 24 * HOUR, NOW), "1d");
+
+check("short text is left alone", clip("Fine as it is", 40), "Fine as it is");check("long text is cut", clip("x".repeat(50), 10).length, 10);
 check("whitespace is flattened, because a row is one line", clip("two\n  lines", 40), "two lines");
 
 ok("a full name matches a first name", mentionsAnyName("Approve Priya's transfer", ["Priya Raman"]));
@@ -690,13 +870,29 @@ const shape = board({
     requests: [request({ createdAt: NOW - 7 * MINUTE })],
     schedules: [schedule(), schedule({ id: "sch-2", title: "Inbox triage", blindRuns: 2, lastRunAt: NOW - HOUR })],
     openItems: [openItem({ createdAt: NOW - 9 * DAY })],
-    activity: [entry(), entry({ id: "act-2", waitingOn: "the data platform team" })],
+    activity: [
+        entry(),
+        entry({ id: "act-2", waitingOn: "the data platform team" }),
+        file({ id: "art-1", description: "Code review of the payments refactor", at: NOW - 4 * DAY }),
+        file({
+            id: "art-2",
+            description: "Migration plan for checkout",
+            location: "/Users/seshi/code/lattice/docs/checkout-migration.md",
+            at: NOW - 6 * HOUR,
+            openedAt: NOW - 5 * HOUR,
+        }),
+    ],
 });
 console.log("");
 console.log("A board with something in every lane:");
 for (const lane of ["you", "stuck", "others", "running", "landed"] as const) {
     const rows = threadsInLane(shape.threads, lane);
     console.log(`  ${lane.padEnd(8)} ${rows.length}  ${rows.map((row) => clip(row.title, 30)).join(" · ")}`);
+}
+console.log("");
+console.log("Made for you, newest first:");
+for (const artifact of shape.artifacts) {
+    console.log(`  ${artifact.opened ? " " : "*"} ${clip(artifact.title, 40).padEnd(42)} ${artifact.shortLocation}`);
 }
 console.log("");
 for (const call of shape.calls.slice(0, 3)) {

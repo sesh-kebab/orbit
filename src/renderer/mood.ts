@@ -66,3 +66,26 @@ export function elapsedLabel(from: number, to = Date.now()): string {
     if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
     return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
+
+/**
+ * A span at the coarsest unit that still says something, for the board's clock
+ * column.
+ *
+ * `elapsedLabel` above is right for an agent, which lives for minutes, and it
+ * never rolls over into days. Things on the board are routinely days old: a
+ * decision that has waited nine days rendered as "216h 0m", which is wider than
+ * the column and unreadable at a glance. One unit, no second component, and
+ * direction is left to the row's tooltip, because the sign is never the question
+ * when the row already says "next" or "waiting".
+ */
+export function shortSpan(at: number, now: number): string {
+    const ms = Math.abs(now - at);
+    if (ms < 60_000) return "now";
+    const minutes = Math.round(ms / 60_000);
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours}h`;
+    const days = Math.round(hours / 24);
+    if (days < 14) return `${days}d`;
+    return `${Math.round(days / 7)}w`;
+}

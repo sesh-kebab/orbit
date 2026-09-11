@@ -30,7 +30,7 @@ export class Store extends EventEmitter {
             usage: { inputTokens: 0, outputTokens: 0, agentsRun: 0, toolCalls: 0 },
             // Empty rather than absent: the renderer draws the board on the
             // first frame, before the orchestrator has derived anything.
-            board: { at: 0, threads: [], calls: [], blindSpots: [] },
+            board: { at: 0, threads: [], artifacts: [], calls: [], blindSpots: [] },
             personaPath: "",
             lastInteractionAt: Date.now(),
         };

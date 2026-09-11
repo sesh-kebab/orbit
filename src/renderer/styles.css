@@ -1191,6 +1191,64 @@ body,
     color: var(--dim);
 }
 
+/*
+ * Artifacts. Drawn as a thread row so a file reads as part of the same board
+ * rather than as a second kind of thing, but it is a real button: the whole row
+ * is the click target, because a small chip at the end of a line is not a thing
+ * you hit on the first try in a panel this narrow.
+ */
+.artifact {
+    width: 100%;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.artifact:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.07);
+}
+.artifact:disabled {
+    cursor: default;
+    opacity: 0.45;
+}
+.artifact-failed .thread-detail {
+    color: var(--danger);
+}
+/*
+ * The unopened mark. A filled dot beside the icon rather than bold text or a
+ * colour on the title, because it has to survive being glanced at and it must
+ * not shout: it is Orbit's weakest claim on the board, and the blind spot at
+ * the bottom says as much.
+ */
+.artifact-new {
+    position: relative;
+    color: var(--ok);
+}
+.artifact-new::after {
+    content: "";
+    position: absolute;
+    top: -1px;
+    right: -3px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--ok);
+}
+.tag.unopened {
+    color: var(--ok);
+    border-color: rgba(99, 214, 154, 0.4);
+}
+/* Indented under the thread that made it, so the parentage is visible. */
+.thread-made {
+    padding-left: 14px;
+}
+.thread-made .thread-title {
+    font-size: calc(var(--chat-font-scale) * 11px);
+    color: var(--muted);
+}
+
 /* One-click replies under an Orbit bubble. */
 .choices {
     display: flex;

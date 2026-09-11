@@ -367,6 +367,21 @@ export interface ActivityEntry {
      * written before it existed, and absent whenever nobody has said.
      */
     waitingOn?: string;
+    /**
+     * When the user last opened this from Orbit, if he ever has.
+     *
+     * Here because the complaint was not that artifacts are not recorded, it is
+     * that the only pointer to one was a path in a chat message that scrolled
+     * away. Recording the open is what lets the board say which of the things it
+     * made for him he has actually looked at, which is the difference between a
+     * list and a useful list.
+     *
+     * Its honest limit: this is an open *through Orbit*. Opening the same file
+     * straight from an editor leaves no trace here, so an absent `openedAt` means
+     * "Orbit has not seen you open it", never "you have not read it". Anything
+     * built on this has to be labelled accordingly, and is.
+     */
+    openedAt?: number;
 }
 
 /**
@@ -411,6 +426,51 @@ export interface BoardThread {
     openItemId?: string;
     requestId?: string;
     activityId?: string;
+    /**
+     * What this thread produced, newest first.
+     *
+     * On the thread rather than only in a list of its own because a thread has
+     * two halves and he needs both: where it got to, and what came out of it. A
+     * finished code review whose report cannot be found from the row that
+     * describes it is the same problem as one that scrolled out of the chat.
+     */
+    artifacts?: BoardArtifact[];
+}
+
+/**
+ * A file Orbit made for him, lifted out of the activity ledger.
+ *
+ * Not a new store. The ledger already recorded every one of these with its
+ * absolute path, the request that prompted it, a day and a status; the failure
+ * was purely that the only pointer a human ever saw was a path in a chat message
+ * that scrolled away. So this type carries nothing that was not already written
+ * down, and adding one changes no persistence.
+ */
+export interface BoardArtifact {
+    /** The activity entry's id. Used to mark it opened, so it must survive a refresh. */
+    id: string;
+    /** The ledger's one-line description. Written to make sense a month later. */
+    title: string;
+    /** Absolute path, or a URL. The renderer picks how to open it from this. */
+    location: string;
+    /** Tail of the path, which is the half worth showing in a narrow panel. */
+    shortLocation: string;
+    /** True when `location` is a URL rather than something on disk. */
+    external: boolean;
+    at: number;
+    kind: ActivityKind;
+    /** What he actually asked for, when the ledger recorded it. */
+    request?: string;
+    /**
+     * Whether Orbit has seen him open it.
+     *
+     * Deliberately named for what it measures. It is not "unread": he may well
+     * have opened the file straight from his editor, and Orbit would never know.
+     * Every piece of copy built on this says so.
+     */
+    opened: boolean;
+    /** The thread that produced it, when one still exists on the board. */
+    threadId?: string;
 }
 
 /**
@@ -470,6 +530,17 @@ export interface Board {
     threads: BoardThread[];
     /** Sorted, highest weight first. The renderer decides how many fit. */
     calls: ChiefCall[];
+    /**
+     * Everything Orbit has made for him, newest first.
+     *
+     * On the board rather than behind a tab of its own because there are two
+     * ways he goes looking for one of these and only one of them is served by
+     * the threads. Sometimes he knows which piece of work produced it, and the
+     * thread row is the right place; sometimes he half remembers a document and
+     * no more than that, and then only recency helps. Same view, two entrances,
+     * no side nav.
+     */
+    artifacts: BoardArtifact[];
     /**
      * What could not be seen while this was built.
      *
@@ -723,6 +794,14 @@ export interface OrbitApi {
     forgetMemory(id: string): Promise<void>;
     /** Mark an outstanding decision as dealt with. */
     resolveOpenItem(id: string): Promise<void>;
+    /**
+     * Record that he opened one of the artifacts on the board.
+     *
+     * Called alongside `openPath`, not instead of it: opening is the act, this
+     * is only the note that it happened. Kept separate so a failure to write the
+     * ledger can never stop a file from opening.
+     */
+    markArtifactOpened(activityId: string): Promise<void>;
     openPersona(): Promise<void>;
     /**
      * Which of these candidate paths actually exist, so a message only offers a

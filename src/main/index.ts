@@ -263,6 +263,9 @@ function registerIpc(): void {
     ipcMain.handle("orbit:resolveOpenItem", (_event, id: string) => {
         orchestrator.resolveOpenItem(id, "dismissed from Mission Control");
     });
+    ipcMain.handle("orbit:markArtifactOpened", (_event, activityId: unknown) => {
+        if (typeof activityId === "string") orchestrator.markArtifactOpened(activityId);
+    });
     ipcMain.handle("orbit:openPersona", () => openPersona());
     // Only ever paths, never commands: main resolves and stats each one, and a
     // string that is not an existing absolute path simply does nothing.

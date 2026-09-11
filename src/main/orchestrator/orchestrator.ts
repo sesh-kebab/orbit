@@ -2618,6 +2618,24 @@ export class Orchestrator {
     }
 
     /**
+     * Note that the user opened one of the artifacts on the board.
+     *
+     * Separate from actually opening the file, and called alongside it, so that
+     * a ledger that will not write can never be the reason a document does not
+     * open. Idempotent: the first open is the one that counts, because the
+     * question this answers is "has he ever looked at this", not "when last".
+     */
+    markArtifactOpened(activityId: string): boolean {
+        const entry = this.activity.find((candidate) => candidate.id === activityId);
+        if (!entry) return false;
+        if (entry.openedAt !== undefined) return true;
+        entry.openedAt = Date.now();
+        this.persistActivity();
+        this.refreshBoard();
+        return true;
+    }
+
+    /**
      * Put stale decisions back in front of the user. Runs off the same slow
      * timer as the watchers, and only when they are at the desk and Orbit is
      * not already mid-thought — a reminder that interrupts is worse than none.
