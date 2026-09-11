@@ -63,6 +63,9 @@ void app.whenReady().then(async () => {
     const devUrl = await resolveRendererUrl(process.env.ELECTRON_RENDERER_URL);
     window = createPanel(preload, devUrl, disk.loadWindowBounds());
     trackBounds(window);
+    // Stamp the geometry straight away, so the one-time widen for the nav rail
+    // is recorded as done even if the user never touches the window again.
+    persistBounds();
 
     orchestrator.onSoftRestart = relaunch;
     orchestrator.freshness = checkFreshness();

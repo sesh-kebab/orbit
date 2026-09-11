@@ -19,9 +19,11 @@ import type {
     OpenItem,
     Proposal,
     Schedule,
+    SavedWindow,
     UsageTotals,
     WindowBounds,
 } from "../shared/types.js";
+import { WINDOW_STATE_VERSION } from "../shared/types.js";
 import { readActivityLedger, writeActivityLedger } from "./activity.js";
 
 const HISTORY_LIMIT = 400;
@@ -296,18 +298,19 @@ export class Persistence {
      * drag handler's clamping; size needs the same treatment now that the panel
      * can be resized.
      */
-    loadWindowBounds(): WindowBounds | undefined {
-        const saved = this.readJson<Partial<WindowBounds> | undefined>("window.json", undefined);
+    loadWindowBounds(): SavedWindow | undefined {
+        const saved = this.readJson<Partial<SavedWindow> | undefined>("window.json", undefined);
         if (!saved) return undefined;
         const { x, y, width, height } = saved;
         if (![x, y, width, height].every((n) => typeof n === "number" && Number.isFinite(n))) {
             return undefined;
         }
-        return { x: x!, y: y!, width: width!, height: height! };
+        const v = typeof saved.v === "number" && Number.isFinite(saved.v) ? saved.v : 0;
+        return { x: x!, y: y!, width: width!, height: height!, v };
     }
 
     saveWindowBounds(bounds: WindowBounds): void {
-        this.writeJson("window.json", bounds);
+        this.writeJson("window.json", { ...bounds, v: WINDOW_STATE_VERSION });
     }
 
     // MARK: - Soft restart

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, watch, writeFileSync } from "node:
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Settings } from "../shared/types.js";
-import { CHAT_FONTS, CHAT_FONT_BASE, CHAT_FONT_MAX, CHAT_FONT_MIN } from "../shared/types.js";
+import { CHAT_FONTS, CHAT_FONT_BASE, CHAT_FONT_MAX, CHAT_FONT_MIN, isDeckSection } from "../shared/types.js";
 
 const DEFAULTS: Settings = {
     workspace: homedir(),
@@ -25,6 +25,7 @@ const DEFAULTS: Settings = {
     chatFontFamily: "rounded",
     chatFontSize: CHAT_FONT_BASE,
     meetingHeadsUp: true,
+    deckSection: "board",
 };
 
 function settingsPath(): string {
@@ -56,6 +57,7 @@ export function normalizeSettings(settings: Settings): Settings {
         merged.chatFontFamily = DEFAULTS.chatFontFamily;
     }
     merged.meetingHeadsUp = merged.meetingHeadsUp !== false;
+    if (!isDeckSection(merged.deckSection)) merged.deckSection = DEFAULTS.deckSection;
     return merged;
 }
 

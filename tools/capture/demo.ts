@@ -35,6 +35,7 @@ const SETTINGS: Settings = {
     chatFontFamily: "rounded",
     chatFontSize: 13,
     meetingHeadsUp: true,
+    deckSection: "board",
 };
 
 function steps(labels: string[]): AgentStep[] {

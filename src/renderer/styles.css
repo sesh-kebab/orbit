@@ -313,8 +313,10 @@ body,
 /* ---------- transcript ---------- */
 
 .transcript {
-    flex: 1;
-    min-height: 0;
+    /* A zero basis and a floor, matching the deck: the chat keeps a third of
+       the panel and never less than a couple of lines. */
+    flex: 1 1 0;
+    min-height: 64px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -324,9 +326,10 @@ body,
     scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
     user-select: text;
 }
-
 .bubble {
-    max-width: 86%;
+    /* Capped in absolute terms as well as proportionally: the window is wide
+       enough now that 86% of it is a line too long to read comfortably. */
+    max-width: min(86%, 560px);
     padding: 8px 11px;
     border-radius: 15px;
     font-size: calc(var(--chat-font-scale) * 13px);
@@ -516,22 +519,6 @@ body,
 
 /* ---------- agents ---------- */
 
-.deck {
-    border-bottom: 1px solid var(--line);
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-}
-.deck-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-.deck-actions {
-    display: flex;
-    gap: 10px;
-}
 .link {
     all: unset;
     display: inline-flex;
@@ -544,12 +531,15 @@ body,
 .link:hover {
     color: var(--ink);
 }
+/*
+ * No height cap here. `.deck-body` is the one scroller in Mission Control;
+ * a second, shorter one nested inside it was the reason the board could only
+ * ever show 160px of itself no matter how large the window got.
+ */
 .deck-list {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    max-height: 160px;
-    overflow-y: auto;
 }
 /* A flex column with a max-height shrinks its children to fit rather than
    scrolling, which squashes rows until their second line is sliced in half.
@@ -782,48 +772,150 @@ body,
 
 /* ---------- mission control ---------- */
 
+/*
+ * The deck is the dominant half of the panel when it is open, not a 260px
+ * strip above the transcript. The board is the tallest thing Orbit draws and
+ * it used to be given 160px to draw in; that was the slit.
+ *
+ * The transcript keeps a floor of its own so the chat never disappears
+ * entirely, and the deck yields to it in a short window.
+ */
 .deck {
     border-bottom: 1px solid var(--line);
     display: flex;
-    flex-direction: column;
-    /* Proportional so mission control can't crowd out the transcript in a
-       short window, but still capped in a tall one. */
-    flex: 0 1 auto;
-    max-height: min(260px, 45%);
+    flex-direction: row;
+    align-items: stretch;
+    /*
+     * Two shares to the transcript's one, from a zero basis so the split is
+     * the same whichever section is open — a flex basis of `auto` would have
+     * let the board's own height decide how much of the panel it took, which
+     * is how a tall section starves the chat and a short one wastes the room.
+     * Capped so the chat never disappears entirely in a short window.
+     */
+    flex: 2 1 0;
+    min-height: 0;
+    max-height: 72%;
 }
 
-.tabs {
+/*
+ * The rail. Vertical because the thing that was scarce is vertical: a row of
+ * tabs spends height to save width, which is exactly the wrong trade in a
+ * window this shape.
+ */
+.deck-rail {
     display: flex;
-    gap: 2px;
-    padding: 8px 10px 0;
+    flex-direction: column;
+    gap: 1px;
+    flex: none;
+    width: 58px;
+    padding: 6px 5px;
+    border-right: 1px solid var(--line);
+    /*
+     * Every section has to be reachable without scrolling — a rail you scroll
+     * is the thing this replaced. Five items at 33px is 165px, and that is
+     * what sets the window's minimum height: below it the deck's two-thirds
+     * share stops being tall enough to hold them all. It can still scroll, as
+     * a last resort, if the font scale is turned right up.
+     */
+    overflow-y: auto;
+    overflow-x: hidden;
 }
-.tab {
+
+/* Pushes appearance to the foot of the rail when there is room, and gives up
+   its own height first when there is not. */
+.rail-spacer {
+    flex: 1 1 0;
+    min-height: 0;
+}
+
+.rail-tab {
     all: unset;
-    font-size: calc(var(--chat-font-scale) * 11px);
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--dim);
-    padding: 5px 9px;
-    border-radius: 9px 9px 0 0;
-    cursor: pointer;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 5px;
+    gap: 2px;
+    padding: 3px 2px 2px;
+    border-radius: 10px;
+    color: var(--dim);
+    cursor: pointer;
+    box-sizing: border-box;
+    flex: none;
 }
-.tab:hover {
+.rail-tab:hover {
     color: var(--ink);
+    background: rgba(255, 255, 255, 0.05);
 }
-.tab.on {
+.rail-tab.on {
     color: var(--ink);
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.1);
 }
-.tab em {
+
+/* The icon and its badge share a box, so the badge can hang off the corner
+   without the label below it moving. */
+.rail-mark {
+    position: relative;
+    display: grid;
+    place-items: center;
+    font-size: calc(var(--chat-font-scale) * 14px);
+    line-height: 1;
+}
+
+.rail-label {
+    font-size: calc(var(--chat-font-scale) * 9px);
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    line-height: 1;
+}
+
+/*
+ * What the rail says without being clicked. Red means one thing only: this
+ * will not move until he does something. Everything else is quiet, because a
+ * rail that shouts about running work teaches him to ignore the colour that
+ * matters.
+ */
+.rail-badge {
+    position: absolute;
+    top: -5px;
+    right: -9px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    box-sizing: border-box;
+    border-radius: 7px;
     font-style: normal;
     font-size: calc(var(--chat-font-scale) * 9px);
-    background: rgba(255, 255, 255, 0.16);
-    border-radius: 7px;
-    padding: 0 4px;
+    font-weight: 800;
+    line-height: 14px;
+    text-align: center;
+    color: var(--ink);
+    background: rgba(255, 255, 255, 0.18);
+}
+.rail-badge.attention {
+    color: #fff;
+    background: var(--danger);
+    box-shadow: 0 0 8px rgba(255, 117, 133, 0.6);
+}
+.rail-badge.quiet {
+    top: -3px;
+    right: -5px;
+    min-width: 7px;
+    width: 7px;
+    height: 7px;
+    padding: 0;
+    border-radius: 50%;
+    background: #8fd8ff;
+    box-shadow: none;
+}
+
+.deck-main {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    /* Without this a long thread title stretches the flex item and pushes the
+       rail off the left edge instead of ellipsing. */
+    min-width: 0;
+    min-height: 0;
 }
 
 .deck-body {

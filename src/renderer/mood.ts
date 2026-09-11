@@ -64,7 +64,15 @@ export function elapsedLabel(from: number, to = Date.now()): string {
     if (seconds < 60) return `${seconds}s`;
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
-    return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+    const hours = Math.floor(minutes / 60);
+    // Past a day it stops being an elapsed time and becomes an age, so it rolls
+    // over the way the board's clock does. An agent normally lives for minutes,
+    // but one blocked on a permission request with the timeout disabled sits
+    // there until he answers — and "216h 0m" is both unreadable and wider than
+    // the column it is drawn in.
+    if (hours < 24) return `${hours}h ${minutes % 60}m`;
+    const days = Math.floor(hours / 24);
+    return days < 14 ? `${days}d` : `${Math.round(days / 7)}w`;
 }
 
 /**

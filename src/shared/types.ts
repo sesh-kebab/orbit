@@ -598,6 +598,32 @@ export interface WindowBounds {
     height: number;
 }
 
+/**
+ * Geometry as it sits on disk. `v` is what makes a one-time correction to a
+ * saved size possible: without it, widening an old narrow window would happen
+ * on every launch and would fight anyone who deliberately narrowed it.
+ */
+export interface SavedWindow extends WindowBounds {
+    v?: number;
+}
+
+/** Bumped when a saved window needs a one-time correction. */
+export const WINDOW_STATE_VERSION = 1;
+
+/**
+ * The sections of Mission Control, in rail order.
+ *
+ * Five, and none of them invented to fill the rail. `work` is the old `agents`
+ * and `watchers` tabs folded together: two stores, one question.
+ */
+export const DECK_SECTIONS = ["board", "work", "memory", "log", "look"] as const;
+
+export type DeckSection = (typeof DECK_SECTIONS)[number];
+
+export function isDeckSection(value: unknown): value is DeckSection {
+    return typeof value === "string" && (DECK_SECTIONS as readonly string[]).includes(value);
+}
+
 export interface Settings {
     /** Directory agents are allowed to work in by default. */
     workspace: string;
@@ -643,6 +669,13 @@ export interface Settings {
      * with none configured it simply finds nothing and stays quiet.
      */
     meetingHeadsUp: boolean;
+    /**
+     * Which Mission Control section was last open, so reopening Orbit lands
+     * where it was left rather than always on the board. A UI position rather
+     * than a preference, but it lives here because settings.json is already
+     * the one thing that survives a restart and reaches the renderer whole.
+     */
+    deckSection: DeckSection;
 }
 
 /** A font the user can pick for the chat panel. */

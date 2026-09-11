@@ -31,7 +31,7 @@ session with full tool access, and tells you where they got to.
 <table>
 <tr>
 <td width="42%" valign="top">
-  <img src="assets/mission-control.png" alt="Mission control panel listing four agents with live status, elapsed time and step counts" width="100%">
+  <img src="assets/mission-control.png" alt="Mission control: a left-hand nav rail with board, work, memory, log and look, and the board open beside it showing what is waiting on you, what is waiting on others, and what is running" width="100%">
 </td>
 <td valign="top">
 
@@ -204,7 +204,7 @@ waiting on a human who went to bed.
 ### Give it a personality
 
 `persona.md` in that same directory is yours. Open it from the menu bar
-(**Edit Orbit's personality…**) or the Memory tab, and write whatever you want its tone and
+(**Edit Orbit's personality…**) or the Memory section, and write whatever you want its tone and
 standing instructions to be. It's prepended to the built-in orchestrator persona
 (`src/main/orchestrator/persona.ts`) on every session, alongside anything Orbit has
 remembered about you and live context like your workspace and current watchers.
@@ -283,7 +283,7 @@ instead of quietly doing the work itself in the chat window.
 <summary><b>Standing watchers</b> — cadences, catch-up rules and archiving</summary>
 
 Ask for recurring work in plain language and Orbit creates a schedule. Watchers persist,
-survive restarts, and live under **Watchers** in mission control where you can pause, run
+survive restarts, and live under **Work** in mission control where you can pause, run
 now, inspect the last report, archive or delete them.
 
 - `interval` watchers never replay a backlog — a machine that was asleep just restarts the
@@ -312,7 +312,7 @@ now, inspect the last report, archive or delete them.
 
 The system prompt is assembled fresh every session from: the built-in orchestrator persona,
 your `persona.md`, remembered notes (Orbit calls `orbit_remember` when you state a lasting
-preference — review or delete them in the Memory tab), and live context.
+preference — review or delete them in the Memory section), and live context.
 
 A nightly self-reflection appends a dated write-up to `~/.copilot/orbit/evolution-log.md`,
 and Orbit reads it back at startup: recent entries newest-first, capped around 3k

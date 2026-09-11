@@ -191,13 +191,15 @@ body {
 
 /*
  * The app window, at the size and position the main process actually gives it:
- * 480x780, 24px in from the right edge and 12px up from the bottom.
+ * `PANEL_SIZE` in src/main/panel.ts, 24px in from the right edge and 12px up
+ * from the bottom. It grew with Mission Control's nav rail; if these two ever
+ * disagree the captures stop being a picture of the app.
  */
 .app-frame {
     position: absolute;
     right: 24px;
     bottom: 12px;
-    width: 480px;
-    height: 780px;
+    width: 720px;
+    height: 820px;
     z-index: 2;
 }

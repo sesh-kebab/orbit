@@ -1,113 +1,295 @@
+/**
+ * Mission Control: a left-hand rail, and one section at a time beside it.
+ *
+ * It used to be a row of tabs above a 160px-tall list, inside a 480px window,
+ * above the transcript. Three caps stacked on the tallest thing Orbit draws.
+ * Moving the switcher to a vertical rail buys back the tab row's height, and
+ * the window is wide enough now that the rail costs nothing that was being
+ * used for reading.
+ *
+ * The rail is deliberately short. Additional UI was allowed; a more
+ * complicated application was not. So nothing was invented to fill it, and
+ * `agents` and `watchers` — two lists of the same thing, work Orbit is doing
+ * without you — became one `work` section rather than two rail slots.
+ */
 import { useEffect, useState } from "react";
 import type { HistoryEntry, OrbitState, Schedule } from "../../shared/types.js";
-import { CHAT_FONTS, CHAT_FONT_SIZES } from "../../shared/types.js";
+import { CHAT_FONTS, CHAT_FONT_SIZES, DECK_SECTIONS, isDeckSection } from "../../shared/types.js";
+import type { DeckSection } from "../../shared/types.js";
 import { elapsedLabel } from "../mood.js";
 import { onScene } from "../scene.js";
 import { BoardTab } from "./Board.js";
-import { Icon } from "./Icon.js";
+import { Icon, type IconName } from "./Icon.js";
 import { AgentRow } from "./Message.js";
 
-type Tab = "board" | "agents" | "watchers" | "memory" | "history" | "look";
+interface SectionDef {
+    id: DeckSection;
+    label: string;
+    icon: IconName;
+    help: string;
+}
 
-const TABS: Array<{ id: Tab; label: string }> = [
-    { id: "board", label: "board" },
-    { id: "agents", label: "agents" },
-    { id: "watchers", label: "watchers" },
-    { id: "memory", label: "memory" },
-    { id: "history", label: "log" },
-    { id: "look", label: "look" },
+const SECTIONS: SectionDef[] = [
+    {
+        id: "board",
+        label: "board",
+        icon: "deck",
+        help: "Every parallel thread at once, and what Orbit thinks you should do about them",
+    },
+    {
+        id: "work",
+        label: "work",
+        icon: "run",
+        help: "Everything Orbit is doing for you: delegated tasks, and the watchers that run on a schedule",
+    },
+    {
+        id: "memory",
+        label: "memory",
+        icon: "book",
+        help: "What Orbit remembers about you, and anything waiting on you",
+    },
+    {
+        id: "log",
+        label: "log",
+        icon: "clock",
+        help: "An append-only timeline of everything that has happened",
+    },
 ];
 
-const TAB_HELP: Record<Tab, string> = {
-    board: "Every parallel thread at once, and what Orbit thinks you should do about them",
-    agents: "Every task Orbit has delegated — click one for its full activity feed",
-    watchers: "Standing jobs that run on a schedule",
-    memory: "What Orbit remembers about you, and anything waiting on you",
-    history: "An append-only timeline of everything that has happened",
-    look: "Change how the panel looks",
+/** Not one of the four. It is how the panel looks, not what Orbit is doing. */
+const LOOK: SectionDef = {
+    id: "look",
+    label: "look",
+    icon: "sliders",
+    help: "Change how the panel looks",
 };
 
+/**
+ * Scene names from the capture harness, which predate the rail and still say
+ * `agents` and `watchers`. They are aliases rather than a rename so an old
+ * capture script keeps posing the panel at the section it meant.
+ */
+const SCENE_ALIASES: Array<[string, DeckSection]> = [
+    ["agents", "work"],
+    ["watchers", "work"],
+    ["history", "log"],
+];
+
+/**
+ * What the rail says about a section without being opened.
+ *
+ * `attention` is the only number drawn in red, and it means the same thing
+ * everywhere: this will not move until he does something. `count` is context
+ * and is drawn quietly. A section with neither gets nothing, because a badge
+ * reading zero teaches him to stop reading badges.
+ */
+export interface RailState {
+    attention?: number;
+    count?: number;
+    /** Something worth a glance that has no useful number. */
+    dot?: boolean;
+    /** Spoken, for the tooltip and for anything that cannot see colour. */
+    why?: string;
+}
+
+export function railState(state: OrbitState, id: DeckSection): RailState {
+    switch (id) {
+        case "board": {
+            // Only what is on him. A count of everything in flight would be a
+            // number he can do nothing with.
+            const onYou = state.board.threads.filter((thread) => thread.lane === "you").length;
+            const unopened = state.board.artifacts.filter((artifact) => !artifact.opened).length;
+            if (onYou > 0) {
+                return {
+                    attention: onYou,
+                    why: `${onYou} thread${onYou === 1 ? "" : "s"} waiting on you`,
+                };
+            }
+            if (unopened > 0) {
+                return { dot: true, why: `${unopened} thing${unopened === 1 ? "" : "s"} Orbit made you, unopened` };
+            }
+            return {};
+        }
+        case "work": {
+            // A permission request is an agent stopped dead until he answers,
+            // which is the one thing in here that is genuinely on him.
+            const blocked = state.requests.length;
+            const live = state.agents.filter((agent) => agent.status === "running").length;
+            const watchers = state.schedules.filter((s) => s.enabled && !s.archived).length;
+            if (blocked > 0) {
+                return {
+                    attention: blocked,
+                    why: `${blocked} agent${blocked === 1 ? "" : "s"} waiting for your approval`,
+                };
+            }
+            if (live > 0) return { count: live, why: `${live} running` };
+            if (watchers > 0) return { count: watchers, why: `${watchers} watcher${watchers === 1 ? "" : "s"} on duty` };
+            return {};
+        }
+        case "memory": {
+            const waiting = state.openItems.filter((item) => !item.resolved).length;
+            return waiting > 0
+                ? { attention: waiting, why: `${waiting} decision${waiting === 1 ? "" : "s"} waiting on you` }
+                : {};
+        }
+        // The log is a record, never a demand, and appearance is never urgent.
+        case "log":
+        case "look":
+            return {};
+    }
+}
+
 export function MissionControl({ state }: { state: OrbitState }): React.JSX.Element {
-    const [tab, setTab] = useState<Tab>("board");
+    // Seeded from the saved choice so reopening Orbit lands where he left it,
+    // then owned locally: a click must switch the pane whether or not the
+    // write to settings.json comes back.
+    const [section, setSection] = useState<DeckSection>(() =>
+        isDeckSection(state.settings.deckSection) ? state.settings.deckSection : "board",
+    );
 
     useEffect(
         () =>
             onScene((scene) => {
-                const match = TABS.find((entry) => scene.endsWith(entry.id));
-                if (match) setTab(match.id);
+                const alias = SCENE_ALIASES.find(([suffix]) => scene.endsWith(suffix));
+                if (alias) {
+                    setSection(alias[1]);
+                    return;
+                }
+                const match = DECK_SECTIONS.find((id) => scene.endsWith(id));
+                if (match) setSection(match);
             }),
         [],
     );
 
+    const choose = (id: DeckSection): void => {
+        setSection(id);
+        void window.orbit.setSettings({ deckSection: id });
+    };
+
     return (
         <div className="deck">
-            <div className="tabs">
-                {TABS.map((entry) => (
-                    <button
+            <nav className="deck-rail" aria-label="Mission control sections">
+                {SECTIONS.map((entry) => (
+                    <RailButton
                         key={entry.id}
-                        className={`tab ${tab === entry.id ? "on" : ""}`}
-                        title={TAB_HELP[entry.id]}
-                        onClick={() => setTab(entry.id)}
-                    >
-                        {entry.label}
-                        {entry.id === "watchers" && state.schedules.length > 0 && (
-                            <em>{state.schedules.filter((s) => s.enabled && !s.archived).length}</em>
-                        )}
-                        {entry.id === "agents" && state.agents.length > 0 && <em>{state.agents.length}</em>}
-                        {/* Only what is on him. A count of everything in flight
-                            would be a number he can do nothing with. */}
-                        {entry.id === "board" &&
-                            state.board.threads.some((thread) => thread.lane === "you") && (
-                                <em>{state.board.threads.filter((thread) => thread.lane === "you").length}</em>
-                            )}
-                    </button>
+                        entry={entry}
+                        on={section === entry.id}
+                        rail={railState(state, entry.id)}
+                        onSelect={() => choose(entry.id)}
+                    />
                 ))}
-            </div>
+                <span className="rail-spacer" />
+                <RailButton
+                    entry={LOOK}
+                    on={section === LOOK.id}
+                    rail={railState(state, LOOK.id)}
+                    onSelect={() => choose(LOOK.id)}
+                />
+            </nav>
 
-            <div className="deck-body">
-                {tab === "board" && <BoardTab state={state} />}
-                {tab === "agents" && <AgentsTab state={state} />}
-                {tab === "watchers" && <WatchersTab state={state} />}
-                {tab === "memory" && <MemoryTab state={state} />}
-                {tab === "history" && <HistoryTab state={state} />}
-                {tab === "look" && <LookTab state={state} />}
-            </div>
+            <div className="deck-main">
+                <div className="deck-body">
+                    {section === "board" && <BoardTab state={state} />}
+                    {section === "work" && <WorkSection state={state} />}
+                    {section === "memory" && <MemoryTab state={state} />}
+                    {section === "log" && <HistoryTab state={state} />}
+                    {section === "look" && <LookTab state={state} />}
+                </div>
 
-            <div className="deck-foot">
-                <button
-                    className="link"
-                    title="Change where agents work by default"
-                    onClick={() => void window.orbit.chooseWorkspace()}
-                >
-                    <Icon name="folder" /> {shortenPath(state.settings.workspace)}
-                </button>
-                <span className="muted small">
-                    {state.usage.agentsRun} run{state.usage.agentsRun === 1 ? "" : "s"} ·{" "}
-                    {state.usage.toolCalls} step{state.usage.toolCalls === 1 ? "" : "s"} ·{" "}
-                    {formatTokens(state.usage.inputTokens + state.usage.outputTokens)} tok
-                </span>
+                <div className="deck-foot">
+                    <button
+                        className="link"
+                        title="Change where agents work by default"
+                        onClick={() => void window.orbit.chooseWorkspace()}
+                    >
+                        <Icon name="folder" /> {shortenPath(state.settings.workspace)}
+                    </button>
+                    <span className="muted small">
+                        {state.usage.agentsRun} run{state.usage.agentsRun === 1 ? "" : "s"} ·{" "}
+                        {state.usage.toolCalls} step{state.usage.toolCalls === 1 ? "" : "s"} ·{" "}
+                        {formatTokens(state.usage.inputTokens + state.usage.outputTokens)} tok
+                    </span>
+                </div>
             </div>
         </div>
     );
 }
 
-function AgentsTab({ state }: { state: OrbitState }): React.JSX.Element {
-    if (state.agents.length === 0) {
-        return <p className="muted small pad">Nothing delegated yet. Ask for something that needs doing.</p>;
-    }
+function RailButton({
+    entry,
+    on,
+    rail,
+    onSelect,
+}: {
+    entry: SectionDef;
+    on: boolean;
+    rail: RailState;
+    onSelect(): void;
+}): React.JSX.Element {
+    return (
+        <button
+            className={`rail-tab ${on ? "on" : ""}`}
+            title={rail.why ? `${entry.help}\n\n${rail.why}` : entry.help}
+            aria-label={rail.why ? `${entry.label} — ${rail.why}` : entry.label}
+            aria-current={on ? "page" : undefined}
+            onClick={onSelect}
+        >
+            <span className="rail-mark">
+                <Icon name={entry.icon} />
+                {rail.attention !== undefined && <em className="rail-badge attention">{rail.attention}</em>}
+                {rail.attention === undefined && rail.count !== undefined && (
+                    <em className="rail-badge">{rail.count}</em>
+                )}
+                {rail.attention === undefined && rail.count === undefined && rail.dot && (
+                    <em className="rail-badge quiet" />
+                )}
+            </span>
+            <span className="rail-label">{entry.label}</span>
+        </button>
+    );
+}
+
+/**
+ * Work: what has been delegated, and what stands watch.
+ *
+ * One section rather than two rail slots. They were separate tabs because they
+ * are separate stores, which is a fact about Orbit's insides and not about the
+ * question being asked. Both answer "what is Orbit doing without me", both are
+ * short lists, and neither was ever tall enough to need a screen of its own.
+ */
+function WorkSection({ state }: { state: OrbitState }): React.JSX.Element {
     return (
         <div className="deck-list">
-            {[...state.agents].reverse().map((agent) => (
-                <AgentDetail key={agent.id} state={state} agentId={agent.id} />
-            ))}
-            {state.agents.some((a) => a.status === "done" || a.status === "failed") && (
-                <button
-                    className="link center"
-                    title="Remove finished and failed agents from this list"
-                    onClick={() => void window.orbit.clearFinished()}
-                >
-                    clear finished
-                </button>
+            <AgentsGroup state={state} />
+            <WatchersGroup state={state} />
+        </div>
+    );
+}
+
+function AgentsGroup({ state }: { state: OrbitState }): React.JSX.Element {
+    return (
+        <div className="lane">
+            <div className="lane-head" title="Every task Orbit has delegated — click one for its full activity feed">
+                <span className="lane-label">delegated</span>
+                {state.agents.length > 0 && <em>{state.agents.length}</em>}
+            </div>
+            {state.agents.length === 0 ? (
+                <p className="muted small pad">Nothing delegated yet. Ask for something that needs doing.</p>
+            ) : (
+                <>
+                    {[...state.agents].reverse().map((agent) => (
+                        <AgentDetail key={agent.id} state={state} agentId={agent.id} />
+                    ))}
+                    {state.agents.some((a) => a.status === "done" || a.status === "failed") && (
+                        <button
+                            className="link center"
+                            title="Remove finished and failed agents from this list"
+                            onClick={() => void window.orbit.clearFinished()}
+                        >
+                            clear finished
+                        </button>
+                    )}
+                </>
             )}
         </div>
     );
@@ -153,22 +335,24 @@ function AgentDetail({ state, agentId }: { state: OrbitState; agentId: string })
     );
 }
 
-function WatchersTab({ state }: { state: OrbitState }): React.JSX.Element {
+function WatchersGroup({ state }: { state: OrbitState }): React.JSX.Element {
     const [showArchived, setShowArchived] = useState(false);
     const live = state.schedules.filter((schedule) => !schedule.archived);
     const archived = state.schedules.filter((schedule) => schedule.archived);
 
-    if (state.schedules.length === 0) {
-        return (
-            <p className="muted small pad">
-                No standing watchers. Try: “keep an eye on my inbox every 30 minutes and flag anything
-                urgent”, or “give me an executive summary at 8:30 every morning”.
-            </p>
-        );
-    }
     return (
-        <div className="deck-list">
-            {live.length === 0 && (
+        <div className="lane">
+            <div className="lane-head" title="Standing jobs that run on a schedule">
+                <span className="lane-label">watching</span>
+                {live.length > 0 && <em>{live.length}</em>}
+            </div>
+            {state.schedules.length === 0 && (
+                <p className="muted small pad">
+                    No standing watchers. Try: “keep an eye on my inbox every 30 minutes and flag anything
+                    urgent”, or “give me an executive summary at 8:30 every morning”.
+                </p>
+            )}
+            {state.schedules.length > 0 && live.length === 0 && (
                 <p className="muted small pad">
                     Nothing on duty. {archived.length} watcher{archived.length === 1 ? "" : "s"} archived.
                 </p>

@@ -34,7 +34,9 @@ export type IconName =
     | "check"
     | "alert"
     | "trash"
-    | "run";
+    | "run"
+    | "book"
+    | "sliders";
 
 /**
  * Paths are drawn on a 16×16 grid, centred, with 2px of breathing room so no
@@ -119,6 +121,29 @@ const PATHS: Record<IconName, React.ReactNode> = {
         <>
             <path d="M3 4.5h10M6.5 4.5V3h3v1.5" />
             <path d="M4.5 4.5l.6 8.5h5.8l.6-8.5" />
+        </>
+    ),
+    /*
+     * Memory. A closed book rather than the pencil, which already means "edit
+     * this file" on the button inside the memory section itself — a rail icon
+     * that repeats a button underneath it reads as the same control twice.
+     */
+    book: (
+        <>
+            <path d="M3.5 3.2h6.2a2 2 0 0 1 2 2v7.6H5.5a2 2 0 0 1-2-2V3.2z" />
+            <path d="M3.5 10.8a2 2 0 0 1 2-2h6.2" />
+        </>
+    ),
+    /*
+     * Appearance. Sliders rather than the shield, which the panel header
+     * already uses for "asking before commands and edits" — the same glyph
+     * meaning both "approval" and "fonts" is worse than no icon.
+     */
+    sliders: (
+        <>
+            <path d="M3 5h4.2M9.8 5H13M3 11h1.6M7.2 11H13" />
+            <circle cx="8.5" cy="5" r="1.6" />
+            <circle cx="5.9" cy="11" r="1.6" />
         </>
     ),
     run: (
