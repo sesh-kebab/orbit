@@ -7,6 +7,7 @@
  */
 
 import type {
+    ActivityEntry,
     AgentStep,
     AgentView,
     ChatMessage,
@@ -16,6 +17,7 @@ import type {
     Schedule,
     Settings,
 } from "../../src/shared/types.js";
+import { deriveBoard } from "../../src/main/orchestrator/board.js";
 
 /** Fixed wall-clock origin, so captures are stable across runs. */
 export const EPOCH = new Date("2025-06-12T08:34:00Z").getTime();
@@ -247,8 +249,45 @@ export const MEMORIES: MemoryNote[] = [
     { id: "n5", text: "Uses pnpm, not npm, in the web repo.", category: "fact", createdAt: EPOCH - 86_400_000 * 3, source: "orbit" },
 ];
 
+/**
+ * Invented ledger entries, so the board has deliveries to lane as well as
+ * agents. The `waitingOn` one is the point of including any of it: the "on
+ * others" lane is otherwise empty in every capture, and an empty lane teaches
+ * nobody what it is for.
+ */
+const DEMO_ACTIVITY: ActivityEntry[] = [
+    {
+        id: "a1",
+        at: EPOCH - 86_400_000 * 4,
+        day: "2025-06-08",
+        kind: "draft_composed",
+        description: "Headcount case for the Q3 review",
+        status: "awaiting_seshi",
+        request: "write up the headcount ask",
+    },
+    {
+        id: "a2",
+        at: EPOCH - 86_400_000 * 6,
+        day: "2025-06-06",
+        kind: "access_checked",
+        description: "Access to the billing telemetry dataset",
+        status: "stalled",
+        waitingOn: "the data platform team",
+        statusChangedAt: EPOCH - 86_400_000 * 5,
+    },
+    {
+        id: "a3",
+        at: EPOCH - 9_000_000,
+        day: "2025-06-12",
+        kind: "artifact_written",
+        description: "Migration plan for the checkout service",
+        location: "~/code/lattice-web/docs/checkout-migration.md",
+        status: "delivered",
+    },
+];
+
 export function baseState(patch: Partial<OrbitState> = {}): OrbitState {
-    return {
+    const state: OrbitState = {
         runtime: "ready",
         chatOpen: true,
         orbitBusy: false,
@@ -269,9 +308,32 @@ export function baseState(patch: Partial<OrbitState> = {}): OrbitState {
             { id: "h5", at: EPOCH - 900_000, kind: "memory.saved", title: "Uses pnpm, not npm, in the web repo" },
         ],
         usage: { inputTokens: 1_284_000, outputTokens: 96_400, agentsRun: 47, toolCalls: 612 },
+        board: { at: EPOCH, threads: [], calls: [], blindSpots: [] },
         personaPath: "~/.copilot/orbit/persona.md",
         lastInteractionAt: EPOCH - 4_000,
         ...patch,
+    };
+
+    // Derived by the real rules from whatever this scene happens to contain,
+    // rather than hand-written per scene. A fabricated board would drift from
+    // the one the app builds, and a capture that flatters the code is worse
+    // than no capture.
+    return {
+        ...state,
+        board: patch.board ?? deriveBoard(
+            {
+                agents: state.agents,
+                requests: state.requests,
+                schedules: state.schedules,
+                openItems: state.openItems,
+                activity: DEMO_ACTIVITY,
+                meetings: [],
+                leave: state.leave,
+                requestTimeoutMinutes: state.settings.requestTimeoutMinutes,
+                agentTimeoutMinutes: state.settings.agentTimeoutMinutes,
+            },
+            EPOCH,
+        ),
     };
 }
 

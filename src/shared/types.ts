@@ -353,6 +353,132 @@ export interface ActivityEntry {
     lastChasedAt?: number;
     /** How many times it has been chased. Drives the back-off. */
     chaseCount?: number;
+    /**
+     * Who this is waiting on, when it is waiting on a person who is not the
+     * user. A name, a team, a system: whatever the answer to "who owes us this?"
+     * actually is.
+     *
+     * This exists because "blocked on him" and "blocked on someone else" are the
+     * two states he most needs told apart, and nothing in Orbit could tell them
+     * apart. Every other signal that might have stood in for it was a guess:
+     * matching names out of a description, reading a `stalled` note as if it
+     * named a person. A guess presented as a fact is exactly what the board must
+     * never do, so this is recorded rather than inferred. Absent on entries
+     * written before it existed, and absent whenever nobody has said.
+     */
+    waitingOn?: string;
+}
+
+/**
+ * Which of the five at-a-glance columns a thread belongs in.
+ *
+ * The set is his, almost verbatim: what is blocked on him, what is running
+ * unattended, what is blocked on someone else. `stuck` and `landed` complete it,
+ * because "what is stuck" was the third thing he asked to see and a thread that
+ * finished an hour ago is neither in flight nor gone.
+ *
+ * Deliberately not a priority. A lane says where a thread is, and the ordering
+ * inside it says what to look at first; conflating the two produced a board
+ * where a finished agent outranked a blocked one because it was newer.
+ */
+export type ThreadLane = "you" | "running" | "others" | "stuck" | "landed";
+
+/** Which store a thread was drawn from. Drives the icon and the click target. */
+export type ThreadKind = "agent" | "watcher" | "decision" | "delivery";
+
+/**
+ * One parallel thread, whatever store it came from.
+ *
+ * The four stores the board unifies were each reachable one tool call at a time
+ * and invisible in scrollback. This is the flattened shape they share: enough to
+ * scan in a narrow panel, with the source ids kept so a row can still act on the
+ * real record behind it.
+ */
+export interface BoardThread {
+    /** Stable across refreshes, so a click target does not move underneath. */
+    id: string;
+    kind: ThreadKind;
+    lane: ThreadLane;
+    title: string;
+    /** One short line under the title. Already written for the width available. */
+    detail: string;
+    /** The moment this lane's clock runs from: blocked since, running since, landed at. */
+    since: number;
+    /** Agent hue, so a row matches the mote the user already recognises. */
+    hue?: number;
+    agentId?: string;
+    scheduleId?: string;
+    openItemId?: string;
+    requestId?: string;
+    activityId?: string;
+}
+
+/**
+ * What sort of judgement a call is making.
+ *
+ * `exposure` is the sharp one: something is about to happen on a timer whether
+ * or not he acts. `decay` is something that costs more the longer it sits.
+ * `leverage` is the ten-minute question. `anticipation` is what is coming that
+ * nobody has asked him about yet.
+ */
+export type CallKind = "exposure" | "leverage" | "decay" | "anticipation" | "capacity";
+
+/**
+ * How much the call can be trusted, and it is always shown.
+ *
+ * `certain` is reserved for arithmetic on timestamps and on links the data model
+ * actually carries: a request belongs to an agent, an agent belongs to a
+ * watcher. `likely` is a real signal read slightly beyond what it strictly
+ * proves. `guess` is a pattern match on prose.
+ *
+ * The rule this type exists to enforce: nothing derived from matching text is
+ * ever `certain`, and no call ships without a `basis` saying where it came from.
+ * A chief of staff who is confidently wrong twice is never listened to again.
+ */
+export type Confidence = "certain" | "likely" | "guess";
+
+/** One piece of judgement about the board, with its reasoning attached. */
+export interface ChiefCall {
+    id: string;
+    kind: CallKind;
+    /** One line, leading with the action. Never a noun phrase. */
+    headline: string;
+    /** The evidence, rendered as a numbered list. Facts, not adjectives. */
+    because: string[];
+    confidence: Confidence;
+    /** Where the confidence comes from, in one plain sentence. Never empty. */
+    basis: string;
+    /** Rough minutes to deal with it. Absent when there is no honest number. */
+    minutes?: number;
+    /** Titles of the threads this frees. Empty when it frees nothing but itself. */
+    unblocks: string[];
+    /** The thread this is about, when it is about one. */
+    threadId?: string;
+    /** Orders the list. Not shown: a number next to a judgement invites arguing with the number. */
+    weight: number;
+}
+
+/**
+ * The at-a-glance surface, derived rather than stored.
+ *
+ * Rebuilt from the live stores on a slow tick, so it has no persistence of its
+ * own and cannot drift from what it describes.
+ */
+export interface Board {
+    /** When this was derived. Shown when it is old enough to matter. */
+    at: number;
+    threads: BoardThread[];
+    /** Sorted, highest weight first. The renderer decides how many fit. */
+    calls: ChiefCall[];
+    /**
+     * What could not be seen while this was built.
+     *
+     * The single most dangerous failure mode of a board is a quiet one: an empty
+     * lane reads as "all clear" whether it is empty because nothing is wrong or
+     * empty because nothing could be looked at. Anything unreadable is named
+     * here instead of being silently omitted.
+     */
+    blindSpots: string[];
 }
 
 
@@ -563,6 +689,12 @@ export interface OrbitState {
     openItems: OpenItem[];
     history: HistoryEntry[];
     usage: UsageTotals;
+    /**
+     * Every parallel thread in one place, plus the judgement about them.
+     * Derived in main and pushed whole: the renderer draws it and decides
+     * nothing.
+     */
+    board: Board;
     personaPath: string;
     lastInteractionAt: number;
     /** Transient line the buddy says when the chat is closed. */

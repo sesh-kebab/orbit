@@ -3,12 +3,14 @@ import type { HistoryEntry, OrbitState, Schedule } from "../../shared/types.js";
 import { CHAT_FONTS, CHAT_FONT_SIZES } from "../../shared/types.js";
 import { elapsedLabel } from "../mood.js";
 import { onScene } from "../scene.js";
+import { BoardTab } from "./Board.js";
 import { Icon } from "./Icon.js";
 import { AgentRow } from "./Message.js";
 
-type Tab = "agents" | "watchers" | "memory" | "history" | "look";
+type Tab = "board" | "agents" | "watchers" | "memory" | "history" | "look";
 
 const TABS: Array<{ id: Tab; label: string }> = [
+    { id: "board", label: "board" },
     { id: "agents", label: "agents" },
     { id: "watchers", label: "watchers" },
     { id: "memory", label: "memory" },
@@ -17,6 +19,7 @@ const TABS: Array<{ id: Tab; label: string }> = [
 ];
 
 const TAB_HELP: Record<Tab, string> = {
+    board: "Every parallel thread at once, and what Orbit thinks you should do about them",
     agents: "Every task Orbit has delegated — click one for its full activity feed",
     watchers: "Standing jobs that run on a schedule",
     memory: "What Orbit remembers about you, and anything waiting on you",
@@ -25,7 +28,7 @@ const TAB_HELP: Record<Tab, string> = {
 };
 
 export function MissionControl({ state }: { state: OrbitState }): React.JSX.Element {
-    const [tab, setTab] = useState<Tab>("agents");
+    const [tab, setTab] = useState<Tab>("board");
 
     useEffect(
         () =>
@@ -51,11 +54,18 @@ export function MissionControl({ state }: { state: OrbitState }): React.JSX.Elem
                             <em>{state.schedules.filter((s) => s.enabled && !s.archived).length}</em>
                         )}
                         {entry.id === "agents" && state.agents.length > 0 && <em>{state.agents.length}</em>}
+                        {/* Only what is on him. A count of everything in flight
+                            would be a number he can do nothing with. */}
+                        {entry.id === "board" &&
+                            state.board.threads.some((thread) => thread.lane === "you") && (
+                                <em>{state.board.threads.filter((thread) => thread.lane === "you").length}</em>
+                            )}
                     </button>
                 ))}
             </div>
 
             <div className="deck-body">
+                {tab === "board" && <BoardTab state={state} />}
                 {tab === "agents" && <AgentsTab state={state} />}
                 {tab === "watchers" && <WatchersTab state={state} />}
                 {tab === "memory" && <MemoryTab state={state} />}

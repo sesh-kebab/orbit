@@ -154,6 +154,7 @@ export interface ActivityInput {
     agentTitle?: string;
     status?: ActivityStatus;
     note?: string;
+    waitingOn?: string;
 }
 
 export function makeActivityEntry(input: ActivityInput, now = Date.now()): ActivityEntry {
@@ -169,6 +170,7 @@ export function makeActivityEntry(input: ActivityInput, now = Date.now()): Activ
         agentTitle: input.agentTitle,
         status: input.status ?? "delivered",
         note: input.note,
+        waitingOn: input.waitingOn,
     };
 }
 
@@ -226,7 +228,8 @@ function line(entry: ActivityEntry, now: number): string {
     const where = entry.location ? ` → ${entry.location}` : "";
     const from = entry.agentTitle ? ` [agent "${entry.agentTitle}"]` : "";
     const asked = entry.request ? ` (asked: ${entry.request})` : "";
-    return `- ${entry.day} ${entry.kind} · ${entry.status} · ${entry.description}${where}${asked}${from} · ${ageOf(entry.at, now)} old · id=${entry.id}`;
+    const owed = entry.waitingOn ? ` · waiting on ${entry.waitingOn}` : "";
+    return `- ${entry.day} ${entry.kind} · ${entry.status}${owed} · ${entry.description}${where}${asked}${from} · ${ageOf(entry.at, now)} old · id=${entry.id}`;
 }
 
 function ageOf(at: number, now: number): string {

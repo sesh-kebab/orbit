@@ -64,6 +64,7 @@ import {
     type MeetingPlan,
 } from "./meetings.js";
 import { MCP_TOOLS_RULE, ORBIT_PERSONA } from "./persona.js";
+import { deriveBoard } from "./board.js";
 import {
     DAILY_BRIEF_TEMPLATE,
     catchUpDecision,
@@ -138,6 +139,12 @@ export class Orchestrator {
     private readonly internalAgents = new Map<string, (agent: AgentView) => void>();
     /** Armed per-meeting heads-ups, keyed by meeting id. */
     private readonly meetingTimers = new Map<string, NodeJS.Timeout>();
+    /**
+     * Today's remaining meetings, as last scanned. Held because the board needs
+     * to know what is coming, and the armed timers only cover the next few
+     * hours.
+     */
+    private meetings: Meeting[] = [];
     /** Local day the current meeting plan was built for. */
     private meetingPlanDay: string | undefined;
     /** True while the calendar scan agent is out, so only one ever is. */
@@ -922,6 +929,12 @@ export class Orchestrator {
                             "Defaults to 'delivered'. Use 'awaiting_seshi' when nothing can move until he looks at it — those come back to you after three days.",
                         ),
                     note: z.string().optional().describe("Anything else worth a few words."),
+                    waitingOn: z
+                        .string()
+                        .optional()
+                        .describe(
+                            "Who owes this, when it is waiting on somebody who is not him. A person, a team, a system. This is the only thing that tells 'blocked on Seshi' from 'blocked on someone else' on his board, and it is never guessed. Set it only when you actually know.",
+                        ),
                 }),
                 handler: async (input) => this.recordActivity(input),
             }),
@@ -968,9 +981,15 @@ export class Orchestrator {
                         .optional()
                         .describe("Where it has got to. Omit to only add a note."),
                     note: z.string().optional().describe("Why it moved, in a few words."),
+                    waitingOn: z
+                        .string()
+                        .optional()
+                        .describe(
+                            "Who it is now waiting on, if that is somebody other than him. Pass an empty string to clear it once they have come back.",
+                        ),
                 }),
-                handler: async ({ activityId, status, note }) =>
-                    this.updateActivity(activityId, status, note),
+                handler: async ({ activityId, status, note, waitingOn }) =>
+                    this.updateActivity(activityId, status, note, waitingOn),
             }),
 
             defineTool("orbit_record_proposal", {
@@ -1380,7 +1399,20 @@ export class Orchestrator {
         this.store.flush();
     }
 
+    /**
+     * An agent reached the end, however it got there.
+     *
+     * Split in two so the board refresh cannot be forgotten: the settling below
+     * has five separate early exits, one per shape of ending, and four of them
+     * would otherwise leave a finished thread sitting in the running lane until
+     * the next tick.
+     */
     private handleAgentFinished(agentId: string): void {
+        this.settleFinishedAgent(agentId);
+        this.refreshBoard();
+    }
+
+    private settleFinishedAgent(agentId: string): void {
         this.runners.delete(agentId);
         const agent = this.findAgent(agentId);
         if (!agent) return;
@@ -1691,6 +1723,9 @@ export class Orchestrator {
         });
         this.store.flush();
         resolver?.resolve({ optionId, freeform });
+        // A lane that still shows him as blocked a second after he unblocked it
+        // reads as the board being wrong, not as the board being slow.
+        this.refreshBoard();
     }
 
     private optionLabel(requestId: string, optionId: string, freeform?: string): string {
@@ -2350,6 +2385,10 @@ export class Orchestrator {
     private adoptMeetingPlan(meetings: Meeting[]): void {
         this.clearMeetingTimers();
         const now = Date.now();
+        // Kept as well as armed. The board's anticipation reads the whole day,
+        // not just the four hours worth arming a timer for, and re-deriving it
+        // from the timers would only ever see the window they cover.
+        this.meetings = meetings.filter((meeting) => meeting.start >= now);
         for (const meeting of armableMeetings(meetings, now, Orchestrator.MEETING_HORIZON_MS)) {
             // Keyed on more than the agent's id: occurrences of a recurring
             // series often share one, and a key collision would overwrite a
@@ -2547,6 +2586,7 @@ export class Orchestrator {
         this.persistOpenItems();
         this.log({ kind: "open.raised", title: trimmed, detail: item.source });
         this.store.flush();
+        this.refreshBoard();
         return { ok: true, openItemId: item.id };
     }
 
@@ -2573,6 +2613,7 @@ export class Orchestrator {
             detail: resolution ? clip(resolution, 200) : undefined,
         });
         this.store.flush();
+        this.refreshBoard();
         return true;
     }
 
@@ -2681,6 +2722,7 @@ export class Orchestrator {
             request: input.request ? clip(input.request, 200) : undefined,
             agentTitle: input.agentTitle ? clip(input.agentTitle, 60) : undefined,
             note: input.note ? clip(input.note, 200) : undefined,
+            waitingOn: input.waitingOn ? clip(input.waitingOn, 60) : undefined,
         });
 
         const duplicate = entry.location
@@ -2692,6 +2734,7 @@ export class Orchestrator {
             duplicate.description = entry.description;
             duplicate.status = entry.status;
             duplicate.statusChangedAt = Date.now();
+            if (entry.waitingOn) duplicate.waitingOn = entry.waitingOn;
             this.persistActivity();
             return { ok: true, activityId: duplicate.id, note: "Already in the ledger; refreshed it." };
         }
@@ -2704,6 +2747,7 @@ export class Orchestrator {
             detail: entry.location ?? entry.kind,
             agentId: entry.agentId,
         });
+        this.refreshBoard();
         return { ok: true, activityId: entry.id };
     }
 
@@ -2722,6 +2766,7 @@ export class Orchestrator {
                 request: entry.request,
                 agentTitle: entry.agentTitle,
                 note: entry.note,
+                waitingOn: entry.waitingOn,
                 age: elapsed(entry.at),
             })),
         };
@@ -2732,10 +2777,13 @@ export class Orchestrator {
         activityId: string,
         status?: ActivityStatus,
         note?: string,
+        waitingOn?: string,
     ): Record<string, unknown> {
         const entry = this.activity.find((candidate) => candidate.id === activityId);
         if (!entry) return { error: "No activity entry with that id." };
-        if (!status && !note) return { error: "Give a status, a note, or both." };
+        if (!status && !note && waitingOn === undefined) {
+            return { error: "Give a status, a note, someone to wait on, or all three." };
+        }
 
         if (status && status !== entry.status) {
             entry.status = status;
@@ -2746,10 +2794,17 @@ export class Orchestrator {
             entry.lastChasedAt = undefined;
         }
         if (note) entry.note = clip(note, 200);
+        // An empty string is how the caller says "they came back". Distinct from
+        // omitting it, which leaves whoever is owed exactly as it was.
+        if (waitingOn !== undefined) {
+            const trimmed = clip(waitingOn, 60);
+            entry.waitingOn = trimmed.length > 0 ? trimmed : undefined;
+        }
 
         this.persistActivity();
         this.log({ kind: "activity.updated", title: `${entry.status}: ${entry.description}`, detail: entry.note });
-        return { ok: true, activityId: entry.id, status: entry.status };
+        this.refreshBoard();
+        return { ok: true, activityId: entry.id, status: entry.status, waitingOn: entry.waitingOn };
     }
 
     /**
@@ -3151,9 +3206,48 @@ export class Orchestrator {
         }
     }
 
+    // MARK: - The board
+
+    /**
+     * Re-derive the at-a-glance board from whatever is true right now.
+     *
+     * Pushed into `OrbitState` rather than computed in the renderer for the same
+     * reason everything else is: main owns the truth, and the activity ledger
+     * the board needs lives here and has no business crossing the wire raw.
+     *
+     * Called on the slow tick, and again at the few moments where waiting even a
+     * couple of seconds would read as a bug: answering a request, settling a
+     * decision, an agent finishing. Cheap enough that the tick could do it every
+     * second; it does not, because nothing on the board changes that fast.
+     */
+    private refreshBoard(): void {
+        const state = this.store.get();
+        const board = deriveBoard(
+            {
+                agents: state.agents,
+                requests: state.requests,
+                schedules: state.schedules,
+                openItems: state.openItems,
+                activity: this.activity,
+                meetings: this.meetings,
+                calendarProblem: this.calendarProblem?.detail,
+                leave: state.leave,
+                requestTimeoutMinutes: this.settings.requestTimeoutMinutes,
+                agentTimeoutMinutes: this.settings.agentTimeoutMinutes,
+            },
+            Date.now(),
+        );
+        this.store.update((next) => {
+            next.board = board;
+        });
+    }
+
     /** Drops expired bubbles; called on a slow timer from main. */
     tick(): void {
         this.tickCount += 1;
+        // The board is derived, never stored, so it only has to keep up with the
+        // eye. Every three seconds is past the point where a human notices.
+        if (this.tickCount % 3 === 0) this.refreshBoard();
         if (this.tickCount % 15 === 0 && this.store.get().runtime === "ready") {
             this.tickSchedules();
         }

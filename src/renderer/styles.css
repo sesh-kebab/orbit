@@ -990,6 +990,207 @@ body,
     background: rgba(255, 159, 69, 0.25);
 }
 
+/* ---------- the board ---------- */
+
+/*
+ * Tighter than the rest of mission control on purpose. This tab has to answer
+ * "what is going on" inside one screenful of a narrow panel, so every gap here
+ * is smaller than its equivalent elsewhere and the type steps down rather than
+ * the content being cut.
+ */
+.board {
+    gap: 10px;
+}
+
+.board-calls {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.call {
+    border-radius: 11px;
+    background: rgba(255, 255, 255, 0.05);
+    border-left: 2px solid var(--line-bright);
+    overflow: hidden;
+}
+/* Something on a timer. The only category that earns a colour of its own. */
+.call-exposure {
+    border-left-color: var(--danger);
+    background: rgba(255, 117, 133, 0.1);
+}
+.call-leverage {
+    border-left-color: #8fd8ff;
+}
+.call-anticipation {
+    border-left-color: #c9b6ff;
+}
+
+.call-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    padding: 7px 8px;
+    cursor: pointer;
+}
+.call-head:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+.call-mark {
+    color: var(--muted);
+    line-height: 1;
+    flex: none;
+    margin-top: 1px;
+}
+.call-exposure .call-mark {
+    color: var(--danger);
+}
+.call-headline {
+    flex: 1;
+    font-size: calc(var(--chat-font-scale) * 12px);
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+/*
+ * The confidence chip is always present, including on the certain ones. Drawn
+ * flat and small so it reads as a label rather than a warning: a badge that
+ * shouts would make every honest call look like a problem.
+ */
+.conf {
+    align-self: flex-start;
+    margin-top: 1px;
+}
+.conf-certain {
+    color: var(--ok);
+    background: rgba(99, 214, 154, 0.14);
+}
+.conf-likely {
+    color: #ffd479;
+    background: rgba(255, 212, 121, 0.14);
+}
+.conf-guess {
+    color: var(--danger);
+    background: rgba(255, 117, 133, 0.14);
+}
+
+.call-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 2px 9px 9px 26px;
+    user-select: text;
+}
+.call-because {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding-left: 14px;
+    font-size: calc(var(--chat-font-scale) * 11px);
+    line-height: 1.4;
+    color: var(--muted);
+}
+.call-because li::marker {
+    color: var(--dim);
+}
+.call-body .kv span:first-child {
+    min-width: 38px;
+}
+
+.lane {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.lane-head {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0 2px 2px;
+}
+.lane-label {
+    font-size: calc(var(--chat-font-scale) * 9px);
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--dim);
+}
+.lane-head em {
+    font-style: normal;
+    font-size: calc(var(--chat-font-scale) * 9px);
+    color: var(--muted);
+}
+/* A hairline instead of a heavier divider: five of these stack up fast. */
+.lane-head::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--line);
+}
+
+.thread {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 6px;
+    border-radius: 9px;
+}
+.thread:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+.thread-mark {
+    color: var(--dim);
+    line-height: 1;
+    flex: none;
+}
+.thread-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+/*
+ * One line each, clipped. Wrapping was tried and a three-line thread pushed the
+ * lane below it off the panel, which defeats the point of a board.
+ */
+.thread-title,
+.thread-detail {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.thread-title {
+    font-size: calc(var(--chat-font-scale) * 12px);
+}
+.thread-detail {
+    font-size: calc(var(--chat-font-scale) * 10px);
+    color: var(--dim);
+}
+.thread-clock {
+    font-size: calc(var(--chat-font-scale) * 10px);
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+    flex: none;
+}
+
+.blind-spots {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 7px 8px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.2);
+}
+.blind-spots ol {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding-left: 15px;
+    font-size: calc(var(--chat-font-scale) * 10px);
+    line-height: 1.4;
+    color: var(--dim);
+}
+
 /* One-click replies under an Orbit bubble. */
 .choices {
     display: flex;
