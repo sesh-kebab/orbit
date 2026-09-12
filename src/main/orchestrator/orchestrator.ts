@@ -52,13 +52,17 @@ import { parseChoices, stripChoicesForStream } from "./choices.js";
 import { clip, elapsed, summarise } from "./describe.js";
 import { evolutionBlock, parseEvolutionLog, type EvolutionEntry } from "./evolution.js";
 import {
+    ACTIVE_RESCAN_MS,
     CALENDAR_SCAN_TEMPLATE,
     armableMeetings,
     calendarUnavailableMessage,
     classifyMeeting,
     headsUpAt,
     headsUpLine,
+    inQuietHours,
+    nextCalendarScanDelay,
     prepBriefFor,
+    quietWindowEnd,
     readMeetingPlan,
     wantsPrep,
     type CalendarProblem,
@@ -2265,8 +2269,12 @@ export class Orchestrator {
      */
     private static readonly MEETING_HORIZON_MS = 4 * 60 * 60 * 1000;
 
-    /** How often the plan is rebuilt, so meetings added mid-day are caught. */
-    private static readonly MEETING_RESCAN_MS = 45 * 60 * 1000;
+    /**
+     * How often the plan is rebuilt while the day still has meetings in it, so
+     * meetings added mid-day are caught. Days with nothing left, weekends and
+     * the small hours all back off from here: see `nextCalendarScanDelay`.
+     */
+    private static readonly MEETING_RESCAN_MS = ACTIVE_RESCAN_MS;
 
     /**
      * How often to retry once it is established there is no calendar to read.
@@ -2285,6 +2293,13 @@ export class Orchestrator {
     private calendarProblem?: { problem: CalendarProblem; detail: string; runs: number };
 
     private lastCalendarScanAt = 0;
+
+    /**
+     * When the next scan is allowed to happen. Derived from what the last scan
+     * found rather than fixed, so an empty day, a weekend and the small hours
+     * all stop costing an agent run every 45 minutes.
+     */
+    private nextCalendarScanAt = 0;
 
     /** How long a scan may be in flight before it is written off as lost. */
     private static readonly SCAN_GIVE_UP_MS = 15 * 60 * 1000;
@@ -2317,27 +2332,47 @@ export class Orchestrator {
         }
 
         const now = Date.now();
-        const newDay = this.meetingPlanDay !== localDay(now);
-        // A calendar that cannot be read is retried on a much slower cadence.
-        // The new day still forces one, so signing in overnight is noticed by
-        // the morning rather than six hours into it.
-        const interval =
-            this.calendarProblem?.problem === "no-calendar"
-                ? Orchestrator.MEETING_BLIND_RESCAN_MS
-                : Orchestrator.MEETING_RESCAN_MS;
-        const stale = now - this.lastCalendarScanAt >= interval;
-        if (!newDay && !stale) return;
+        if (this.meetingPlanDay !== localDay(now)) {
+            // A new local day invalidates the plan — but the day turns over at
+            // midnight, in the middle of the quiet window, and a scan there
+            // only ever finds meetings hours too far out to arm. So the rollover
+            // schedules the first scan rather than performing it.
+            //
+            // Only a real rollover, though. `meetingPlanDay` is also cleared to
+            // force a scan when the user switches the feature on, and deferring
+            // that to 06:30 because they happened to do it at eleven at night
+            // makes a deliberate action look broken.
+            const rollover = this.meetingPlanDay !== undefined;
+            this.meetingPlanDay = localDay(now);
+            this.nextCalendarScanAt = rollover && inQuietHours(now) ? quietWindowEnd(now) : 0;
+        }
+        if (now < this.nextCalendarScanAt) return;
 
         this.scanningCalendar = true;
         this.lastCalendarScanAt = now;
-        this.meetingPlanDay = localDay(now);
+        // Provisional, so a scan that errors or never reports back cannot leave
+        // the door open for another one on the very next tick.
+        this.nextCalendarScanAt =
+            now +
+            (this.calendarProblem?.problem === "no-calendar"
+                ? Orchestrator.MEETING_BLIND_RESCAN_MS
+                : Orchestrator.MEETING_RESCAN_MS);
 
         const spawned = this.spawnAgent("Read today's calendar", CALENDAR_SCAN_TEMPLATE, undefined, {
             announce: false,
             onResult: (agent) => {
                 this.scanningCalendar = false;
                 if (agent.status !== "done") return;
-                this.applyMeetingPlan(readMeetingPlan(agent.result ?? ""));
+                const plan = readMeetingPlan(agent.result ?? "");
+                this.applyMeetingPlan(plan);
+                this.nextCalendarScanAt =
+                    Date.now() +
+                    nextCalendarScanDelay(
+                        Date.now(),
+                        plan,
+                        Orchestrator.MEETING_HORIZON_MS,
+                        Orchestrator.MEETING_BLIND_RESCAN_MS,
+                    );
             },
         });
         // The agent cap and a missing runtime both come back as an error rather
@@ -3214,6 +3249,7 @@ export class Orchestrator {
             // off should drop the timers already armed.
             this.meetingPlanDay = undefined;
             this.lastCalendarScanAt = 0;
+            this.nextCalendarScanAt = 0;
             this.ensureMeetingPlan();
             // Otherwise switching it on looks broken: nothing is scanned and
             // nothing says why.

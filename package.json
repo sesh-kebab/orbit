@@ -48,7 +48,8 @@
     "verify:calendar": "esbuild scripts/verify-calendar.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-calendar.mjs --log-level=warning && node node_modules/.cache/verify-calendar.mjs",
     "verify:board": "esbuild scripts/verify-board.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-board.mjs --log-level=warning && node node_modules/.cache/verify-board.mjs",
     "verify:agent-tools": "esbuild scripts/verify-agent-tools.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-agent-tools.mjs --log-level=warning && node node_modules/.cache/verify-agent-tools.mjs",
-    "verify:render": "esbuild scripts/verify-render.ts --bundle --platform=node --format=esm --jsx=automatic --external:react --external:react-dom --outfile=node_modules/.cache/verify-render.mjs --log-level=warning && node node_modules/.cache/verify-render.mjs"
+    "verify:render": "esbuild scripts/verify-render.ts --bundle --platform=node --format=esm --jsx=automatic --external:react --external:react-dom --outfile=node_modules/.cache/verify-render.mjs --log-level=warning && node node_modules/.cache/verify-render.mjs",
+    "verify:meetings": "esbuild scripts/verify-meetings.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-meetings.mjs --log-level=warning && node node_modules/.cache/verify-meetings.mjs"
   },
   "dependencies": {
     "@github/copilot-sdk": "^1.0.8",

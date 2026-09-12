@@ -116,6 +116,126 @@ export function armableMeetings(meetings: Meeting[], now: number, withinMs: numb
         .slice(0, MAX_ARMED_MEETINGS);
 }
 
+// MARK: - When to look at the calendar again
+
+/**
+ * How often the calendar is re-read while the day still has meetings in it.
+ * Frequent on purpose: this is the only thing that notices a meeting added
+ * after the last scan.
+ */
+export const ACTIVE_RESCAN_MS = 45 * 60 * 1000;
+
+/**
+ * The same question, asked of a day that has already run out of meetings.
+ * Something can still be added, so the answer is not "never", but re-asking
+ * every 45 minutes buys nothing: anything added lands well outside the arming
+ * horizon and will be picked up with hours to spare.
+ */
+export const IDLE_RESCAN_MS = 2 * 60 * 60 * 1000;
+
+/** Weekends are mostly empty and the user does not want to hear about them. */
+export const WEEKEND_RESCAN_MS = 4 * 60 * 60 * 1000;
+
+/** Nothing is gained by scanning more often than this, whatever the maths says. */
+export const MIN_RESCAN_MS = 5 * 60 * 1000;
+
+/** Local hour the quiet window opens. Nothing is scheduled after this. */
+export const QUIET_FROM_HOUR = 22;
+
+/** Local time the quiet window closes, as hour and minute. */
+export const QUIET_UNTIL_HOUR = 6;
+export const QUIET_UNTIL_MINUTE = 30;
+
+/**
+ * Is this moment inside the overnight window where reading the calendar is
+ * pure waste? Wraps midnight, hence the `||`.
+ */
+export function inQuietHours(at: number): boolean {
+    const date = new Date(at);
+    const minutes = date.getHours() * 60 + date.getMinutes();
+    return minutes >= QUIET_FROM_HOUR * 60 || minutes < QUIET_UNTIL_HOUR * 60 + QUIET_UNTIL_MINUTE;
+}
+
+export function isWeekend(at: number): boolean {
+    const day = new Date(at).getDay();
+    return day === 0 || day === 6;
+}
+
+/** The next moment the quiet window is over, in local time. */
+export function quietWindowEnd(at: number): number {
+    const end = new Date(at);
+    end.setHours(QUIET_UNTIL_HOUR, QUIET_UNTIL_MINUTE, 0, 0);
+    if (end.getTime() <= at) end.setDate(end.getDate() + 1);
+    return end.getTime();
+}
+
+/**
+ * How long to wait before reading the calendar again.
+ *
+ * The scan is not free — it is a whole agent run against a calendar API — and
+ * a fixed cadence spent one Saturday firing twenty-nine times at an empty day,
+ * including every hour between midnight and seven. So the interval is derived
+ * from what the last scan actually found:
+ *
+ * - a day with meetings still ahead of it keeps the frequent cadence, because
+ *   that is the case where a late addition matters;
+ * - a day with nothing left, and a weekend, back off hard;
+ * - the overnight window is skipped outright, unless a meeting is genuinely
+ *   scheduled inside it;
+ * - and none of that is allowed to push the next scan past the moment the next
+ *   known meeting becomes armable, so backing off can never lose a heads-up
+ *   that was already on the books.
+ *
+ * A scan that could not read the calendar at all is deliberately *not* treated
+ * as an empty day. An empty day is evidence the cadence can relax; a blind scan
+ * is evidence of nothing except that something is broken, and the retry cadence
+ * for that is the caller's `blindMs`, held flat so the run that discovers the
+ * fix is not also slowed down.
+ *
+ * Pure: `now` and the plan in, milliseconds out.
+ */
+export function nextCalendarScanDelay(
+    now: number,
+    plan: MeetingPlan,
+    horizonMs: number,
+    blindMs: number,
+): number {
+    if (!plan.ok) return Math.max(MIN_RESCAN_MS, blindMs);
+
+    const upcoming = plan.meetings
+        .map((meeting) => meeting.start)
+        .filter((start) => start > now)
+        .sort((a, b) => a - b);
+    const nextStart = upcoming[0];
+
+    const base =
+        nextStart === undefined
+            ? isWeekend(now)
+                ? WEEKEND_RESCAN_MS
+                : IDLE_RESCAN_MS
+            : isWeekend(now)
+              ? Math.min(WEEKEND_RESCAN_MS, ACTIVE_RESCAN_MS * 2)
+              : ACTIVE_RESCAN_MS;
+
+    let at = now + base;
+
+    // Overnight: skip to the far side, unless something is actually on the
+    // calendar before then and would go unarmed if we slept through it.
+    if (inQuietHours(now)) {
+        const wake = quietWindowEnd(now);
+        if (nextStart === undefined || nextStart > wake) at = Math.max(at, wake);
+    }
+
+    // The arming cap. A meeting becomes armable once its heads-up is within the
+    // horizon; scanning later than that moment is how a back-off drops one.
+    if (nextStart !== undefined) {
+        const armableAt = headsUpAt({ start: nextStart }) - horizonMs;
+        if (armableAt > now) at = Math.min(at, armableAt);
+    }
+
+    return Math.max(MIN_RESCAN_MS, at - now);
+}
+
 /** One line for the bubble: the whole point, in the width available. */
 export function headsUpLine(meeting: Meeting, shape: MeetingShape): string {
     const minutes = Math.max(1, Math.round((meeting.start - Date.now()) / 60_000));
