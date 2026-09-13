@@ -2469,6 +2469,13 @@ export class Orchestrator {
         }
         if (this.meetingTimers.size > 0) {
             console.log(`[orbit] armed ${this.meetingTimers.size} meeting heads-up(s)`);
+            // Durable, unlike the console line: a later review can ask whether
+            // this ever armed against a real calendar and get an answer.
+            this.log({
+                kind: "meeting.armed",
+                title: `Armed ${this.meetingTimers.size} meeting heads-up(s)`,
+                detail: [...this.meetingTimers.keys()].join(", "),
+            });
         }
     }
 
@@ -2491,6 +2498,11 @@ export class Orchestrator {
         const line = headsUpLine(meeting, shape);
         this.say(line);
         this.nudge(line);
+        this.log({
+            kind: "meeting.headsup",
+            title: meeting.subject,
+            detail: `${shape}${wantsPrep(shape) ? ", prep spawned" : ", no prep"}`,
+        });
 
         if (!wantsPrep(shape)) {
             this.store.flush();

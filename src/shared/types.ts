@@ -583,6 +583,16 @@ export interface HistoryEntry {
         | "activity.updated"
         | "proposal.raised"
         | "proposal.updated"
+        /**
+         * Heads-ups armed for today's meetings, and each one as it fires.
+         *
+         * Recorded because the feature was otherwise unobservable: arming only
+         * reached a console line and the heads-up itself only reached the chat,
+         * so "has this ever run against a real calendar?" was unanswerable for
+         * the month the calendar was dead and the nineteen days after it.
+         */
+        | "meeting.armed"
+        | "meeting.headsup"
         | "session.error";
     title: string;
     detail?: string;
