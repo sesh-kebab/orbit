@@ -72,6 +72,13 @@ import {
 import { MCP_TOOLS_RULE, ORBIT_PERSONA } from "./persona.js";
 import { deriveBoard } from "./board.js";
 import {
+    OPEN_ITEM_CAP,
+    describeChasing,
+    noteRaised,
+    selectForReRaise,
+    selectOutstanding,
+} from "./openItems.js";
+import {
     DAILY_BRIEF_TEMPLATE,
     catchUpDecision,
     clearBackoff,
@@ -2578,20 +2585,14 @@ export class Orchestrator {
 
     // MARK: - Open items
 
-    /** Longest a decision sits unanswered before it is put back in front of the user. */
-    private static readonly RERAISE_AFTER_MS = 4 * 60 * 60 * 1000;
-
-    /** Only re-raise while the user is actually around to answer. */
+    /**
+     * Only re-raise while the user is actually around to answer. The gap
+     * between askings, and which items are chosen, live in `openItems.ts`.
+     */
     private static readonly RECENT_INTERACTION_MS = 30 * 60 * 1000;
 
-    /** At most this many outstanding items are ever quoted at once. */
-    private static readonly OPEN_ITEM_CAP = 6;
-
     private outstandingItems(): OpenItem[] {
-        return this.store
-            .get()
-            .openItems.filter((item) => !item.resolved)
-            .slice(-Orchestrator.OPEN_ITEM_CAP);
+        return selectOutstanding(this.store.get().openItems, OPEN_ITEM_CAP);
     }
 
     private openItemsBlock(items: OpenItem[]): string {
@@ -2599,7 +2600,9 @@ export class Orchestrator {
             .map((item) => {
                 const age = elapsed(item.createdAt);
                 const from = item.source ? ` — from ${item.source}` : "";
-                return `- ${item.text} (raised ${age} ago${from}) id=${item.id}`;
+                const chased = describeChasing(item);
+                const chasing = chased ? `, ${chased}` : "";
+                return `- ${item.text} (raised ${age} ago${chasing}${from}) id=${item.id}`;
             })
             .join("\n");
         return [
@@ -2702,17 +2705,18 @@ export class Orchestrator {
         if (state.orbitBusy || !this.orbit) return;
         if (Date.now() - state.lastInteractionAt > Orchestrator.RECENT_INTERACTION_MS) return;
 
-        const due = this.outstandingItems().filter(
-            (item) =>
-                Date.now() - (item.lastRaisedAt ?? item.createdAt) > Orchestrator.RERAISE_AFTER_MS,
-        );
+        const now = Date.now();
+        const due = selectForReRaise(state.openItems, now);
         if (due.length === 0) return;
 
+        // Stamp only what is actually being shown. Marking an item raised when
+        // it was left out of the batch resets its silence without anyone having
+        // seen it, which is how items went unasked for days in the first place.
         const ids = new Set(due.map((item) => item.id));
         this.store.update((s) => {
-            for (const item of s.openItems) {
-                if (ids.has(item.id)) item.lastRaisedAt = Date.now();
-            }
+            s.openItems = s.openItems.map((item) =>
+                ids.has(item.id) ? noteRaised(item, now) : item,
+            );
         });
         this.persistOpenItems();
         this.notifyOrbit(this.openItemsBlock(due));

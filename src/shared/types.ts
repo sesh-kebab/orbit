@@ -243,6 +243,13 @@ export interface OpenItem {
     source?: string;
     /** Last time it was put back in front of the user. */
     lastRaisedAt?: number;
+    /**
+     * How many times it has been put in front of the user, counting the first.
+     * Drives the widening gap between askings: a question ignored five times is
+     * asked far less often than one asked once. Absent on items written before
+     * the field existed, which are read as having been asked once.
+     */
+    timesRaised?: number;
 }
 
 /**
