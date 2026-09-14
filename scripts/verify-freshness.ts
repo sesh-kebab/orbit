@@ -7,10 +7,14 @@
  * exercised separately, at the bottom, against this repository itself.
  */
 import {
+    FRESHNESS_TAG,
     GRACE_MS,
     assessFreshness,
     collectFreshnessFacts,
+    decideFreshnessAction,
     describeGap,
+    freshnessSource,
+    stateOfFreshnessSource,
     type FreshnessFacts,
 } from "../src/main/freshness.js";
 
@@ -144,6 +148,92 @@ check(
     assessFreshness(facts({ builtAt: undefined }), NOW).summary,
     undefined,
 );
+
+// --- Deciding what to do about the open item --------------------------------
+
+// The bug this whole path exists to fix: between 11 and 13 September a build
+// landed at 21:37 under a process started the previous night, and nothing was
+// raised, because the answer was computed once at launch and never revisited.
+const restartFacts = facts({ builtAt: NOW - 5 * MINUTE, processStartedAt: NOW - 26 * HOUR });
+const stale = assessFreshness(restartFacts, NOW);
+
+const firstNotice = decideFreshnessAction(undefined, stale);
+check("a fresh problem is raised", firstNotice.kind, "raise");
+ok(
+    "the raised note is tagged so it can be found again",
+    firstNotice.kind === "raise" && firstNotice.text.startsWith(FRESHNESS_TAG),
+);
+check(
+    "and records which problem it was raised for",
+    firstNotice.kind === "raise" ? firstNotice.source : undefined,
+    "freshness check: needs-restart",
+);
+
+const raised = {
+    text: firstNotice.kind === "raise" ? firstNotice.text : "",
+    source: firstNotice.kind === "raise" ? firstNotice.source : undefined,
+};
+
+check(
+    "the same problem is not raised twice",
+    decideFreshnessAction(
+        raised,
+        assessFreshness(
+            facts({ builtAt: NOW - 9 * HOUR, newestSourceAt: NOW - 12 * HOUR, processStartedAt: NOW - 30 * HOUR }),
+            NOW,
+        ),
+    ).kind,
+    "none",
+);
+check(
+    "a restart clears the note",
+    decideFreshnessAction(raised, assessFreshness(facts({}), NOW)).kind,
+    "resolve",
+);
+check(
+    "so does losing the ability to tell",
+    decideFreshnessAction(raised, undefined).kind,
+    "resolve",
+);
+check(
+    "and there is nothing to clear when nothing was raised",
+    decideFreshnessAction(undefined, assessFreshness(facts({}), NOW)).kind,
+    "none",
+);
+
+// Telling someone to restart onto a build that has since gone stale would send
+// them round the loop twice, so the note is replaced rather than left standing.
+const changed = decideFreshnessAction(raised, needsBuild);
+check("a different problem replaces the old note", changed.kind, "replace");
+ok(
+    "the replacement explains why the old one closed",
+    changed.kind === "replace" && changed.reason.includes("needs-restart"),
+);
+ok(
+    "and the new note asks for the right thing",
+    changed.kind === "replace" && changed.text.toLowerCase().includes("rebuild"),
+);
+check(
+    "the replacement records the new problem",
+    changed.kind === "replace" ? changed.source : undefined,
+    "freshness check: needs-build",
+);
+
+// Notes written before the state was recorded must not all re-raise on upgrade.
+check(
+    "a note from before this change is left alone",
+    decideFreshnessAction({ text: `${FRESHNESS_TAG} something older`, source: "freshness check" }, stale).kind,
+    "none",
+);
+check(
+    "a note with no source at all is left alone",
+    decideFreshnessAction({ text: `${FRESHNESS_TAG} something older` }, stale).kind,
+    "none",
+);
+
+check("the source round-trips", stateOfFreshnessSource(freshnessSource("needs-build")), "needs-build");
+check("an unrelated source yields no state", stateOfFreshnessSource("BAMI reply drafting agent"), undefined);
+check("a missing source yields no state", stateOfFreshnessSource(undefined), undefined);
 
 // --- Wording ----------------------------------------------------------------
 

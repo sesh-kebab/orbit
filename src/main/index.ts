@@ -68,6 +68,7 @@ void app.whenReady().then(async () => {
     persistBounds();
 
     orchestrator.onSoftRestart = relaunch;
+    orchestrator.freshnessProbe = checkFreshness;
     orchestrator.freshness = checkFreshness();
 
     store.on("state", (state) => {
@@ -132,13 +133,22 @@ function persistBounds(): void {
  * Only meaningful when running from a checkout: a packaged app has no source
  * tree to be behind, and `collectFreshnessFacts` returns nothing to compare in
  * that case, so this quietly reports nothing rather than guessing.
+ *
+ * Called once at startup and then on a slow timer, because the case worth
+ * catching is a build that finishes *after* launch. Reads a handful of mtimes,
+ * so it is cheap enough to repeat and far cheaper than the two days of silence
+ * that came of only asking once.
  */
 function checkFreshness(): ReturnType<typeof assessFreshness> | undefined {
     try {
         const now = Date.now();
         const facts = collectFreshnessFacts(app.getAppPath(), process.uptime() * 1000, now);
         const freshness = assessFreshness(facts, now);
-        if (freshness.summary) console.warn(`[orbit] ${freshness.summary}`);
+        // Repeated every few minutes, so only say it when the answer changes.
+        if (freshness.state !== lastFreshnessState) {
+            lastFreshnessState = freshness.state;
+            if (freshness.summary) console.warn(`[orbit] ${freshness.summary}`);
+        }
         return freshness;
     } catch (error) {
         // Never let a housekeeping check stop the app from starting.
@@ -146,6 +156,9 @@ function checkFreshness(): ReturnType<typeof assessFreshness> | undefined {
         return undefined;
     }
 }
+
+/** The last answer logged, so a repeating check does not repeat itself. */
+let lastFreshnessState: string | undefined;
 
 /**
  * Restart into the freshly built code. `app.exit` is used rather than

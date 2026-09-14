@@ -110,6 +110,7 @@ import {
     parseRunDays,
     suppressionAt,
 } from "./suppression.js";
+import { FRESHNESS_TAG, decideFreshnessAction } from "../freshness.js";
 import type { Freshness } from "../freshness.js";
 
 /** Distinguishes 'not installed' from a runtime that started and then failed. */
@@ -198,6 +199,12 @@ export class Orchestrator {
      * process, which is the only part that knows where the repo is on disk.
      */
     freshness: Freshness | undefined;
+    /**
+     * Re-measures the above. Supplied by the main process, which is the only
+     * part that knows where the repo is on disk, and called on a slow timer so
+     * a build that lands under a running process is actually noticed.
+     */
+    freshnessProbe: (() => Freshness | undefined) | undefined;
 
     constructor(
         private readonly store: Store,
@@ -2740,9 +2747,6 @@ export class Orchestrator {
 
     // MARK: - Running build
 
-    /** Marks the one open item this check owns, so it can find it again. */
-    private static readonly FRESHNESS_TAG = "[running build]";
-
     /**
      * Tell the model what it is actually running.
      *
@@ -2771,25 +2775,50 @@ export class Orchestrator {
      *
      * Raised when the running build falls behind and resolved by the same code
      * once a restart has caught it up, so the reminder cannot outlive the
-     * problem and nobody has to remember to close it. Tagged rather than matched
-     * on the whole message because the wording carries an age that changes every
-     * time it is measured.
+     * problem and nobody has to remember to close it. The decision itself lives
+     * in `decideFreshnessAction`, where it can be checked without a store.
      */
     private reconcileFreshness(): void {
-        const tag = Orchestrator.FRESHNESS_TAG;
         const existing = this.store
             .get()
-            .openItems.find((item) => !item.resolved && item.text.startsWith(tag));
+            .openItems.find((item) => !item.resolved && item.text.startsWith(FRESHNESS_TAG));
 
-        const summary = this.freshness?.summary;
-        if (!summary) {
-            if (existing) this.resolveOpenItem(existing.id, "The running build caught up.");
+        const action = decideFreshnessAction(existing, this.freshness);
+        switch (action.kind) {
+            case "none":
+                return;
+            case "resolve":
+                if (existing) this.resolveOpenItem(existing.id, action.reason);
+                return;
+            case "replace":
+                if (existing) this.resolveOpenItem(existing.id, action.reason);
+                this.raiseOpenItem(action.text, action.source);
+                return;
+            case "raise":
+                this.raiseOpenItem(action.text, action.source);
+                return;
+        }
+    }
+
+    /**
+     * Re-measure whether the running code is the written code.
+     *
+     * Measuring this once at launch could only ever catch a process started from
+     * an already-stale build. The case the check exists for is the opposite one:
+     * a build that lands *underneath* a running process, which is what happens
+     * every night when Orbit edits and rebuilds itself. Between 11 and 13
+     * September that went unreported for two days, because the answer was
+     * computed at 21:41 on the 11th and never looked at again.
+     */
+    private refreshFreshness(): void {
+        if (!this.freshnessProbe) return;
+        try {
+            this.freshness = this.freshnessProbe();
+        } catch {
+            // A housekeeping check must never take the tick loop down with it.
             return;
         }
-        // Already asked. Re-raising on every launch would nag with a number that
-        // only grows, which is the behaviour open items exist to avoid.
-        if (existing) return;
-        this.raiseOpenItem(`${tag} ${summary}`, "freshness check");
+        this.reconcileFreshness();
     }
 
     // MARK: - Activity ledger
@@ -3364,6 +3393,13 @@ export class Orchestrator {
         // read as one wall of nagging.
         if (this.tickCount % 300 === 150 && this.store.get().runtime === "ready") {
             this.chaseStaleActivity();
+        }
+        // Whether the running code is still the written code. Deliberately not
+        // gated on the runtime being ready: a stale build is worth knowing about
+        // precisely when things are not working, and this touches only disk and
+        // the store. Offset again so the three slow jobs never share a tick.
+        if (this.tickCount % 300 === 75) {
+            this.refreshFreshness();
         }
 
         const state: OrbitState = this.store.get();

@@ -19,6 +19,12 @@
  *   needs-build    the source is newer than `out/` — a rebuild is required
  *   needs-restart  `out/` is newer than this process — a relaunch is required
  *
+ * This has to be asked repeatedly, not once at launch. Asking only at startup
+ * can catch a process started from an already-stale build, but never the case
+ * that actually happens here: Orbit rebuilds itself at night, so the build
+ * lands *underneath* a running process. Between 11 and 13 September two nights
+ * of merged work sat unrun and unmentioned for exactly that reason.
+ *
  * The core is pure and takes `now` as an argument. Reading mtimes is the only
  * part that touches disk, and it is deliberately separate so the rules can be
  * tested without a filesystem, a clock, or a build.
@@ -110,6 +116,72 @@ export function assessFreshness(facts: FreshnessFacts, now: number): Freshness {
     }
 
     return { state: "current", behindMs: 0 };
+}
+
+/**
+ * What to do about the open item that tracks a stale build.
+ *
+ * Split out from the orchestrator because the interesting part is a decision,
+ * not a store write, and a decision can be checked without a filesystem. The
+ * rule it encodes is narrow: say it once per distinct problem. Re-raising the
+ * same problem would nag with a number that only grows, which is the behaviour
+ * open items exist to avoid; but leaving a `needs-build` notice in place after
+ * the build has happened and the real answer became `needs-restart` would send
+ * the user to do the wrong thing.
+ */
+export type FreshnessAction =
+    | { kind: "none" }
+    | { kind: "raise"; text: string; source: string }
+    | { kind: "replace"; text: string; source: string; reason: string }
+    | { kind: "resolve"; reason: string };
+
+/** Marks the one open item this check owns, so it can find its own note again. */
+export const FRESHNESS_TAG = "[running build]";
+
+/**
+ * The state is carried on the item's `source` rather than buried in its wording,
+ * because the wording contains an age that changes every time it is measured and
+ * so cannot be compared against anything.
+ */
+export function freshnessSource(state: FreshnessState): string {
+    return `freshness check: ${state}`;
+}
+
+/** The state a note was raised for, or undefined if it did not record one. */
+export function stateOfFreshnessSource(source: string | undefined): FreshnessState | undefined {
+    const match = /^freshness check:\s*(current|needs-build|needs-restart|unknown)$/.exec(source ?? "");
+    return (match?.[1] as FreshnessState | undefined) ?? undefined;
+}
+
+export function decideFreshnessAction(
+    existing: { text: string; source?: string } | undefined,
+    freshness: Freshness | undefined,
+): FreshnessAction {
+    // No summary means nothing is wrong, or nothing is knowable. Either way the
+    // note must not outlive the problem it described.
+    if (!freshness?.summary) {
+        return existing ? { kind: "resolve", reason: "The running build caught up." } : { kind: "none" };
+    }
+
+    const text = `${FRESHNESS_TAG} ${freshness.summary}`;
+    const source = freshnessSource(freshness.state);
+    if (!existing) return { kind: "raise", text, source };
+
+    // Already asked about this exact problem. Asking again is nagging.
+    const was = stateOfFreshnessSource(existing.source);
+    if (was === freshness.state) return { kind: "none" };
+
+    // A note written before the state was recorded. Trust it rather than
+    // churning: re-raising every old item once on upgrade is the nagging this
+    // whole path exists to prevent.
+    if (was === undefined) return { kind: "none" };
+
+    return {
+        kind: "replace",
+        text,
+        source,
+        reason: `No longer ${was}: now ${freshness.state}.`,
+    };
 }
 
 /** Rough, human units. Precision here would be false: mtimes are not exact. */
