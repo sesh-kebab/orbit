@@ -70,6 +70,7 @@ import {
     type MeetingPlan,
 } from "./meetings.js";
 import { MCP_TOOLS_RULE, ORBIT_PERSONA } from "./persona.js";
+import { correctMemory as applyMemoryCorrection, type MemoryCorrection } from "./memory.js";
 import { deriveBoard } from "./board.js";
 import {
     OPEN_ITEM_CAP,
@@ -847,6 +848,26 @@ export class Orchestrator {
                         category: memory.category,
                     })),
                 }),
+            }),
+
+            defineTool("orbit_correct_memory", {
+                description:
+                    "Repair a remembered item whose wording is now wrong or out of date. The memory keeps its id and its history: the old wording is retired against it rather than deleted, so this is the safe way to fix a memory you did not write. Use it when you notice a memory contradicting what you can see is true, for instance a renamed project or a path that no longer exists.",
+                skipPermission: true,
+                parameters: z.object({
+                    memoryId: z.string().describe("Id from orbit_list_memories."),
+                    text: z.string().describe("The corrected sentence, written so it makes sense months from now."),
+                    category: z
+                        .enum(["preference", "fact", "routine", "person", "project"])
+                        .optional()
+                        .describe("Only when the correction changes what kind of thing this is."),
+                    reason: z
+                        .string()
+                        .optional()
+                        .describe("Why the old wording was wrong, in a few words. Kept against the retired text."),
+                }),
+                handler: async ({ memoryId, text, category, reason }) =>
+                    this.correctMemory(memoryId, { text, category, reason }),
             }),
 
             defineTool("orbit_forget", {
@@ -2592,6 +2613,29 @@ export class Orchestrator {
         this.log({ kind: "memory.saved", title: trimmed, detail: category });
         this.store.flush();
         return { ok: true, memoryId: memory.id };
+    }
+
+    /**
+     * Repair a memory in place. The old wording is retired against the record
+     * rather than dropped, so nothing is destroyed and an agent can be trusted
+     * with it. See `memory.ts` for why this exists alongside `forget`.
+     */
+    correctMemory(memoryId: string, correction: MemoryCorrection): Record<string, unknown> {
+        const outcome = applyMemoryCorrection(this.store.get().memories, memoryId, correction, Date.now());
+        if (outcome.error) return { error: outcome.error };
+        if (outcome.corrected && outcome.note) return { ok: true, note: outcome.note, memoryId };
+
+        this.store.update((state) => {
+            state.memories = outcome.memories;
+        });
+        this.disk.saveMemories(this.store.get().memories);
+        this.log({
+            kind: "memory.saved",
+            title: outcome.corrected?.text ?? "",
+            detail: `corrected${correction.reason ? `: ${correction.reason}` : ""}`,
+        });
+        this.store.flush();
+        return { ok: true, memoryId, corrected: outcome.corrected?.text };
     }
 
     forget(memoryId: string): void {

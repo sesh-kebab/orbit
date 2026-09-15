@@ -35,9 +35,13 @@ export const AGENT_TOOL_NAMES: readonly string[] = [
     "orbit_record_activity",
     "orbit_update_activity",
     // Durable facts learned mid-investigation, which otherwise die with the
-    // session that learned them.
+    // session that learned them. Correcting is allowed where forgetting is not:
+    // a correction keeps the record and retires the old wording against it,
+    // and without it the nightly reflection can only add to a memory list it
+    // can see is wrong. See `memory.ts`.
     "orbit_list_memories",
     "orbit_remember",
+    "orbit_correct_memory",
     // Read-only context.
     "orbit_list_schedules",
     "orbit_list_leave",

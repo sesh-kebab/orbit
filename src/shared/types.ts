@@ -288,12 +288,28 @@ export interface Proposal {
     supersededBy?: string;
 }
 
+/** A wording a memory used to carry, kept when the memory was corrected. */
+export interface RetiredMemoryText {
+    text: string;
+    retiredAt: number;
+    /** Why it was replaced, in a few words. */
+    reason?: string;
+}
+
 export interface MemoryNote {
     id: string;
     text: string;
     category: "preference" | "fact" | "routine" | "person" | "project";
     createdAt: number;
     source: "orbit" | "user";
+    /** When the text was last corrected, if it ever was. */
+    correctedAt?: number;
+    /**
+     * Wordings this memory used to carry, oldest first. A correction moves the
+     * record rather than destroying it, which is what makes correcting safe for
+     * an agent when deleting is not.
+     */
+    priorText?: RetiredMemoryText[];
 }
 
 /**
