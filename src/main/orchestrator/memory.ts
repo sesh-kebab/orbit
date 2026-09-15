@@ -1,0 +1,113 @@
+/**
+ * Correcting a memory, as opposed to deleting one.
+ *
+ * Memories are injected into the system prompt of every session
+ * (`orchestrator.ts`, the memory block). That makes a wrong memory active
+ * misinformation rather than an inert record: it is re-asserted to the model
+ * every time Orbit starts, and it will be believed.
+ *
+ * `orbit_forget` already existed, but it is on `FORBIDDEN_AGENT_TOOL_NAMES`
+ * because it "destroys a record rather than moving it". That rule is right, and
+ * the consequence was still wrong: the nightly self-reflection is the only
+ * process that ever reviews the memory list, and it could add to that list but
+ * never repair it. Four of twenty-six memories still named the project by its
+ * old name and pointed at a repo and a log path that have not existed since
+ * 20 August, and no run could do anything about it but write another memory
+ * contradicting the first.
+ *
+ * So the fix is a correction, not a delete. The record keeps its id, its
+ * creation date and its provenance; the old wording is retired into
+ * `priorText` with the reason it was replaced. Nothing is destroyed, which is
+ * exactly the property that made deletion unsafe for an agent, so this is safe
+ * for one.
+ */
+import type { MemoryNote } from "../../shared/types.js";
+
+/** How many superseded wordings to keep before dropping the oldest. */
+export const PRIOR_TEXT_CAP = 5;
+
+/** Longest a memory may be, matching what `remember` clips to. */
+export const MEMORY_TEXT_CAP = 240;
+
+export interface MemoryCorrection {
+    /** The replacement wording. */
+    text: string;
+    /** A new category, when the correction changes what kind of thing it is. */
+    category?: MemoryNote["category"];
+    /** Why it was wrong, in a few words. Kept against the retired wording. */
+    reason?: string;
+}
+
+export interface CorrectionOutcome {
+    /** The list to persist. Unchanged when the correction did not apply. */
+    memories: MemoryNote[];
+    /** The corrected record, when one changed. */
+    corrected?: MemoryNote;
+    /** Why nothing changed, when nothing did. */
+    error?: string;
+    /** Set when the correction was a no-op rather than a failure. */
+    note?: string;
+}
+
+function clip(text: string, max: number): string {
+    const trimmed = text.trim();
+    return trimmed.length <= max ? trimmed : `${trimmed.slice(0, max - 1).trimEnd()}…`;
+}
+
+function same(a: string, b: string): boolean {
+    return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+/**
+ * Apply a correction, returning a new list. Pure: takes its clock as an
+ * argument and mutates nothing it was given.
+ */
+export function correctMemory(
+    memories: readonly MemoryNote[],
+    memoryId: string,
+    correction: MemoryCorrection,
+    now: number,
+): CorrectionOutcome {
+    const all = [...memories];
+    const index = all.findIndex((memory) => memory.id === memoryId);
+    if (index === -1) {
+        return { memories: all, error: "No memory with that id. List them first with orbit_list_memories." };
+    }
+
+    const text = clip(correction.text, MEMORY_TEXT_CAP);
+    if (text.length === 0) {
+        return { memories: all, error: "A correction needs replacement text. To retire a memory outright, say so instead." };
+    }
+
+    const current = all[index];
+    const categoryChanged = correction.category !== undefined && correction.category !== current.category;
+    if (same(current.text, text) && !categoryChanged) {
+        return { memories: all, corrected: current, note: "Already says that." };
+    }
+
+    // Correcting one memory into the exact words of another would leave two
+    // records asserting the same thing, which is the duplicate `remember`
+    // already refuses to create.
+    const collision = all.find((memory) => memory.id !== memoryId && same(memory.text, text));
+    if (collision) {
+        return {
+            memories: all,
+            error: `Memory ${collision.id} already says that. Correct or retire that one instead of duplicating it.`,
+        };
+    }
+
+    const priorText = [...(current.priorText ?? [])];
+    if (!same(current.text, text)) {
+        priorText.push({ text: current.text, retiredAt: now, ...(correction.reason ? { reason: correction.reason } : {}) });
+    }
+
+    const corrected: MemoryNote = {
+        ...current,
+        text,
+        category: correction.category ?? current.category,
+        correctedAt: now,
+        ...(priorText.length > 0 ? { priorText: priorText.slice(-PRIOR_TEXT_CAP) } : {}),
+    };
+    all[index] = corrected;
+    return { memories: all, corrected };
+}
