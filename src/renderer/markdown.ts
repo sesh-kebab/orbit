@@ -33,11 +33,22 @@ export type Inline =
     | { type: "em"; children: Inline[] }
     | { type: "strike"; children: Inline[] };
 
+/** A column's alignment, from the `:---:` row. `undefined` is the default. */
+export type Align = "left" | "center" | "right" | undefined;
+
 export type Block =
     | { type: "paragraph"; children: Inline[] }
     | { type: "heading"; level: number; children: Inline[] }
     | { type: "quote"; blocks: Block[] }
-    | { type: "list"; ordered: boolean; start: number; items: Block[][] }
+    | {
+          type: "list";
+          ordered: boolean;
+          start: number;
+          items: Block[][];
+          /** Per item: the state of its `[ ]` box, or `undefined` if it had none. */
+          tasks?: Array<boolean | undefined>;
+      }
+    | { type: "table"; align: Align[]; header: Inline[][]; rows: Inline[][][] }
     | { type: "code"; text: string; language?: string }
     | { type: "rule" };
 
@@ -48,6 +59,8 @@ const RULE = /^\s{0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 const QUOTE = /^\s{0,3}>\s?(.*)$/;
 const BULLET = /^(\s*)([-*+])\s+(.*)$/;
 const NUMBER = /^(\s*)(\d{1,9})[.)]\s+(.*)$/;
+/** `[ ]` or `[x]` opening a list item, which makes it a task. */
+const TASK = /^\[([ xX])\]\s+(.*)$/;
 
 /**
  * Parse a message into blocks.
@@ -117,7 +130,7 @@ function parseBlocks(lines: string[]): Block[] {
                 // A blank line ends the quote; plain text under it is a lazy
                 // continuation and stays part of the same quote.
                 if (!(lines[index] ?? "").trim()) break;
-                if (isBlockStart(lines[index] ?? "")) break;
+                if (isBlockStart(lines[index] ?? "", lines[index + 1] ?? "")) break;
                 body.push(lines[index] ?? "");
                 index += 1;
             }
@@ -132,10 +145,17 @@ function parseBlocks(lines: string[]): Block[] {
             continue;
         }
 
+        const table = parseTable(lines, index);
+        if (table) {
+            blocks.push(table[0]);
+            index = table[1];
+            continue;
+        }
+
         const body: string[] = [];
         while (index < lines.length) {
             const current = lines[index] ?? "";
-            if (!current.trim() || isBlockStart(current)) break;
+            if (!current.trim() || isBlockStart(current, lines[index + 1] ?? "")) break;
             body.push(current.trim());
             index += 1;
         }
@@ -151,12 +171,13 @@ function isClosingFence(line: string, marker: string): boolean {
         && /^(`{3,}|~{3,})$/.test(trimmed);
 }
 
-function isBlockStart(line: string): boolean {
+function isBlockStart(line: string, next = ""): boolean {
     return (
         FENCE.test(line) ||
         HEADING.test(line) ||
         RULE.test(line) ||
         QUOTE.test(line) ||
+        isTableStart(line, next) ||
         listMarker(line) !== undefined
     );
 }
@@ -186,6 +207,101 @@ function listMarker(line: string): Marker | undefined {
 }
 
 /**
+ * GitHub's pipe tables.
+ *
+ * A table is only a table once its delimiter row has arrived, which is exactly
+ * the rule the rest of this parser follows: a lone `| a | b |` is a line of
+ * prose until the `|---|---|` under it says otherwise, so a half-streamed table
+ * never flickers between text and a one-row grid. The delimiter row also has to
+ * declare the same number of columns as the header, which is GitHub's rule and
+ * the thing that keeps an ASCII box drawing from being mistaken for data.
+ *
+ * Body rows are padded or truncated to the header's width rather than being
+ * rejected, because a ragged row is a typo in a document, not a reason to show
+ * the reader pipes.
+ */
+function parseTable(lines: string[], from: number): [Block, number] | undefined {
+    const header = lines[from] ?? "";
+    const align = delimiterRow(lines[from + 1] ?? "");
+    if (!align || !header.includes("|")) return undefined;
+
+    const names = splitRow(header);
+    if (names.length !== align.length) return undefined;
+
+    const rows: Inline[][][] = [];
+    let index = from + 2;
+    while (index < lines.length) {
+        const line = lines[index] ?? "";
+        // The table ends at a blank line, at anything that opens another block,
+        // or at a line carrying no pipe at all.
+        if (!line.trim() || !line.includes("|")) break;
+        if (FENCE.test(line) || HEADING.test(line) || QUOTE.test(line)) break;
+        const cells = splitRow(line);
+        const row = names.map((_, column) => parseInline(cells[column] ?? ""));
+        rows.push(row);
+        index += 1;
+    }
+
+    return [{ type: "table", align, header: names.map(parseInline), rows }, index];
+}
+
+/** True when these two lines open a table, without building one. */
+function isTableStart(line: string, next: string): boolean {
+    if (!line.includes("|")) return false;
+    const align = delimiterRow(next);
+    return align !== undefined && splitRow(line).length === align.length;
+}
+
+/** `|---|:--:|---:|` to one alignment per column, or nothing if it is not one. */
+function delimiterRow(line: string): Align[] | undefined {
+    if (!line.includes("-") || !line.includes("|")) return undefined;
+    if (!/^[\s|:-]+$/.test(line)) return undefined;
+    const cells = splitRow(line);
+    if (cells.length === 0) return undefined;
+    const align: Align[] = [];
+    for (const cell of cells) {
+        if (!/^:?-+:?$/.test(cell)) return undefined;
+        const left = cell.startsWith(":");
+        const right = cell.endsWith(":");
+        align.push(left && right ? "center" : right ? "right" : left ? "left" : undefined);
+    }
+    return align;
+}
+
+/**
+ * One row into its cells.
+ *
+ * The outer pipes are optional in GitHub's syntax, so they are shed before
+ * splitting rather than producing empty cells at both ends. `\|` is a literal
+ * pipe and is unescaped here, where the column boundaries are still known;
+ * leaving it for the inline pass would mean splitting on it first.
+ */
+function splitRow(line: string): string[] {
+    let text = line.trim();
+    if (text.startsWith("|")) text = text.slice(1);
+    if (text.endsWith("|") && !text.endsWith("\\|")) text = text.slice(0, -1);
+
+    const cells: string[] = [];
+    let cell = "";
+    for (let index = 0; index < text.length; index += 1) {
+        const char = text[index];
+        if (char === "\\" && text[index + 1] === "|") {
+            cell += "|";
+            index += 1;
+            continue;
+        }
+        if (char === "|") {
+            cells.push(cell);
+            cell = "";
+            continue;
+        }
+        cell += char;
+    }
+    cells.push(cell);
+    return cells.map((value) => value.trim());
+}
+
+/**
  * One list, and any lists nested inside it.
  *
  * Nesting is decided purely by indentation: a marker indented further than the
@@ -199,12 +315,18 @@ function parseList(lines: string[], from: number): [Block, number] {
     const ordered = opener?.ordered ?? false;
     const indent = opener?.indent ?? 0;
     const items: Block[][] = [];
+    const tasks: Array<boolean | undefined> = [];
     let index = from;
     let current: string[] | undefined;
+    let box: boolean | undefined;
 
     const flush = (): void => {
-        if (current) items.push(parseBlocks(current));
+        if (current) {
+            items.push(parseBlocks(current));
+            tasks.push(box);
+        }
         current = undefined;
+        box = undefined;
     };
 
     while (index < lines.length) {
@@ -226,7 +348,11 @@ function parseList(lines: string[], from: number): [Block, number] {
             // rather than continuing this one.
             if (marker.ordered !== ordered && current) break;
             flush();
-            current = [marker.content];
+            // `- [x] done` is a task item: the box is lifted off here so the
+            // rest of the parser never sees brackets it would render literally.
+            const task = TASK.exec(marker.content);
+            box = task ? (task[1] ?? " ").toLowerCase() === "x" : undefined;
+            current = [task ? (task[2] ?? "") : marker.content];
             index += 1;
             continue;
         }
@@ -252,7 +378,16 @@ function parseList(lines: string[], from: number): [Block, number] {
     }
 
     flush();
-    return [{ type: "list", ordered, start: opener?.start ?? 1, items }, index];
+    const list: Extract<Block, { type: "list" }> = {
+        type: "list",
+        ordered,
+        start: opener?.start ?? 1,
+        items,
+    };
+    // Only a list with at least one box carries the array, so an ordinary list
+    // is the same shape it has always been.
+    if (tasks.some((task) => task !== undefined)) list.tasks = tasks;
+    return [list, index];
 }
 
 /**

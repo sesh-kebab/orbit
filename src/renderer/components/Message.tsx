@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AgentView, ChatMessage, OrbitState, PathInfo, PendingRequest } from "../../shared/types.js";
 import { agentColor, elapsedLabel } from "../mood.js";
 import { Icon } from "./Icon.js";
-import { parseMarkdown, isPlainText, type Block, type Inline } from "../markdown.js";
+import { parseMarkdown, isPlainText, type Align, type Block, type Inline } from "../markdown.js";
 import { pathCandidates, pathLabel, splitPathSegments, urlLabel } from "../paths.js";
 import { isViewable, openInReader } from "../reader.js";
 
@@ -138,18 +138,47 @@ function BlockNode({ block, known }: { block: Block; known: Map<string, PathInfo
                 <ol className="md-list" start={block.start}>
                     {block.items.map((item, index) => (
                         <li key={index}>
+                            <Task checked={block.tasks?.[index]} />
                             <Blocks blocks={item} known={known} />
                         </li>
                     ))}
                 </ol>
             ) : (
-                <ul className="md-list">
+                <ul className={block.tasks ? "md-list md-tasks" : "md-list"}>
                     {block.items.map((item, index) => (
                         <li key={index}>
+                            <Task checked={block.tasks?.[index]} />
                             <Blocks blocks={item} known={known} />
                         </li>
                     ))}
                 </ul>
+            );
+        case "table":
+            return (
+                <div className="md-table-scroll">
+                    <table className="md-table">
+                        <thead>
+                            <tr>
+                                {block.header.map((cell, column) => (
+                                    <th key={column} className={align(block.align[column])}>
+                                        <Inlines nodes={cell} known={known} />
+                                    </th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {block.rows.map((row, index) => (
+                                <tr key={index}>
+                                    {row.map((cell, column) => (
+                                        <td key={column} className={align(block.align[column])}>
+                                            <Inlines nodes={cell} known={known} />
+                                        </td>
+                                    ))}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
             );
         default:
             return (
@@ -158,6 +187,21 @@ function BlockNode({ block, known }: { block: Block; known: Map<string, PathInfo
                 </p>
             );
     }
+}
+
+function align(value: Align): string | undefined {
+    return value ? `md-${value}` : undefined;
+}
+
+/**
+ * The box on a task list item.
+ *
+ * Disabled, because this is a rendering of what an agent wrote rather than a
+ * list anybody owns: a tickable box would imply the tick went somewhere.
+ */
+function Task({ checked }: { checked: boolean | undefined }): React.JSX.Element | null {
+    if (checked === undefined) return null;
+    return <input className="md-task" type="checkbox" checked={checked} disabled readOnly />;
 }
 
 function Inlines({ nodes, known }: { nodes: Inline[]; known: Map<string, PathInfo> }): React.JSX.Element {

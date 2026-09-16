@@ -62,7 +62,11 @@ body {
     -webkit-font-smoothing: antialiased;
     overflow-wrap: break-word;
 }
-.doc { max-width: 62ch; }
+.doc { max-width: 100%; }
+/* The design language's measure belongs to prose. Tables, code and anything
+   else that is really data is allowed to be wider than 68 characters, because
+   narrowing a table does not make it easier to read, it makes it taller. */
+p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6 { max-width: 62ch; }
 h1 { font-size: 32px; line-height: 1.15; font-weight: 600; margin: 0 0 24px; }
 h2 { font-size: 20px; line-height: 1.25; font-weight: 600; margin: 48px 0 16px; }
 h3, h4, h5, h6 { font-size: 17px; font-weight: 600; margin: 24px 0 8px; }
@@ -100,9 +104,18 @@ pre {
 pre code { background: none; padding: 0; font-size: 13px; }
 strong { font-weight: 600; }
 del { color: #6f6b85; }
-table { border-collapse: collapse; width: 100%; margin: 0 0 16px; }
-th, td { text-align: left; padding: 8px 8px 8px 0; border-bottom: 1px solid #2e2b3f; }
-th { font-size: 13px; text-transform: uppercase; color: #a9a6bd; font-weight: 500; }
+table { border-collapse: collapse; width: 100%; margin: 0; }
+th, td { text-align: left; padding: 8px 16px 8px 0; border-bottom: 1px solid #2e2b3f; vertical-align: top; }
+th:last-child, td:last-child { padding-right: 0; }
+th { font-size: 13px; text-transform: uppercase; color: #a9a6bd; font-weight: 500; white-space: nowrap; }
+td { font-size: 17px; }
+th.center, td.center { text-align: center; }
+th.right, td.right { text-align: right; font-variant-numeric: tabular-nums; }
+/* A table is never squeezed to fit the panel; it scrolls, the way code does. */
+.scroller { margin: 0 0 16px; overflow-x: auto; }
+ul.tasks { padding-left: 24px; }
+li.task { list-style: none; display: flex; gap: 8px; align-items: baseline; }
+li.task > input { accent-color: #9d8cff; margin: 0; flex: none; }
 img { max-width: 100%; }
 `.trim();
 
@@ -163,8 +176,34 @@ function blockToHtml(block: Block): string {
         case "list": {
             const tag = block.ordered ? "ol" : "ul";
             const start = block.ordered && block.start !== 1 ? ` start="${block.start}"` : "";
-            const items = block.items.map((item) => `<li>${item.map(blockToHtml).join("")}</li>`).join("");
-            return `<${tag}${start}>${items}</${tag}>`;
+            const tasks = block.tasks;
+            const items = block.items
+                .map((item, index) => {
+                    const box = tasks?.[index];
+                    const body = item.map(blockToHtml).join("");
+                    if (box === undefined) return `<li>${body}</li>`;
+                    // Disabled on purpose: this is a rendering of a document,
+                    // not a to-do list anyone can tick, and the sandbox would
+                    // refuse to do anything with the click anyway.
+                    const checked = box ? " checked" : "";
+                    return `<li class="task"><input type="checkbox" disabled${checked}>${body}</li>`;
+                })
+                .join("");
+            return `<${tag}${tasks ? ' class="tasks"' : ""}${start}>${items}</${tag}>`;
+        }
+        case "table": {
+            const cell = (tag: "th" | "td", nodes: Inline[], column: number): string => {
+                const align = block.align[column];
+                return `<${tag}${align ? ` class="${align}"` : ""}>${inlineToHtml(nodes)}</${tag}>`;
+            };
+            const head = block.header.map((nodes, column) => cell("th", nodes, column)).join("");
+            const body = block.rows
+                .map((row) => `<tr>${row.map((nodes, column) => cell("td", nodes, column)).join("")}</tr>`)
+                .join("");
+            // The scroller is what lets a seven-column status table exist in a
+            // 440px panel: the table keeps its own width and the reader pushes
+            // it sideways, rather than every column being crushed to a word.
+            return `<div class="scroller"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
         }
         case "code":
             return `<pre><code>${escapeHtml(block.text)}</code></pre>`;
