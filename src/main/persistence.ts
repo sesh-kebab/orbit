@@ -25,6 +25,12 @@ import type {
 } from "../shared/types.js";
 import { WINDOW_STATE_VERSION } from "../shared/types.js";
 import { readActivityLedger, writeActivityLedger } from "./activity.js";
+import {
+    DEFAULT_SELF_PROMPT,
+    REVISION_CAP,
+    nextRevision,
+    type PromptRevision,
+} from "./orchestrator/selfPrompt.js";
 
 const HISTORY_LIMIT = 400;
 
@@ -66,6 +72,16 @@ const EVOLUTION_LOG_PATH = join(ORBIT_HOME_DIR, "evolution-log.md");
 
 /** Never read more of the log than a digest could possibly use. */
 const EVOLUTION_LOG_READ_CAP = 200_000;
+
+/**
+ * Orbit's own operating notes, and the append-only history of how they got
+ * that way. Beside `persona.md` in spirit but not on disk: `persona.md` is the
+ * user's and lives in the app's data directory, while anything Orbit writes
+ * about itself lives here, where the nightly reflection already reads and
+ * writes without needing to know where Electron put its support directory.
+ */
+const SYSTEM_PROMPT_PATH = join(ORBIT_HOME_DIR, "system-prompt.md");
+const PROMPT_REVISIONS_PATH = join(ORBIT_HOME_DIR, "system-prompt-revisions.jsonl");
 
 /** One tool or agent Orbit reached for during a turn, and how it went. */
 export interface LoggedToolCall {
@@ -432,6 +448,72 @@ export class Persistence {
         } catch {
             return "";
         }
+    }
+
+    // MARK: - The self-modifiable prompt
+
+    get systemPromptPath(): string {
+        return SYSTEM_PROMPT_PATH;
+    }
+
+    get promptRevisionsPath(): string {
+        return PROMPT_REVISIONS_PATH;
+    }
+
+    /**
+     * Orbit's own operating notes. Seeded on first read so there is something
+     * concrete to revise, and so the seeding is itself revision 1 rather than an
+     * unrecorded state the history cannot roll back to.
+     */
+    loadSystemPrompt(): string {
+        if (!existsSync(SYSTEM_PROMPT_PATH)) {
+            const seeded = this.writePromptRevision(
+                nextRevision([], DEFAULT_SELF_PROMPT.trim(), "Seeded on first run.", "seed", new Date()),
+            );
+            if (!seeded) return DEFAULT_SELF_PROMPT.trim();
+        }
+        try {
+            return readFileSync(SYSTEM_PROMPT_PATH, "utf8").trim();
+        } catch {
+            return "";
+        }
+    }
+
+    loadPromptRevisions(): PromptRevision[] {
+        try {
+            return readFileSync(PROMPT_REVISIONS_PATH, "utf8")
+                .split("\n")
+                .filter(Boolean)
+                .map((line) => JSON.parse(line) as PromptRevision)
+                .filter((entry) => typeof entry?.revision === "number" && typeof entry?.text === "string")
+                .slice(-REVISION_CAP);
+        } catch {
+            return [];
+        }
+    }
+
+    /**
+     * Land a revision: the readable file the user edits, and the append-only
+     * record behind it. The markdown is written first, because a history entry
+     * describing a state the file was never in is worse than a state with no
+     * history entry. Returns false if nothing could be written, so the caller
+     * reports a failure rather than telling Orbit its prompt changed when it
+     * did not.
+     */
+    writePromptRevision(revision: PromptRevision): boolean {
+        try {
+            mkdirSync(ORBIT_HOME_DIR, { recursive: true });
+            writeFileSync(SYSTEM_PROMPT_PATH, `${revision.text}\n`, "utf8");
+        } catch (error) {
+            console.error("[orbit] could not write the system prompt:", error);
+            return false;
+        }
+        try {
+            appendFileSync(PROMPT_REVISIONS_PATH, `${JSON.stringify(revision)}\n`, "utf8");
+        } catch (error) {
+            console.error("[orbit] could not record the prompt revision:", error);
+        }
+        return true;
     }
 }
 

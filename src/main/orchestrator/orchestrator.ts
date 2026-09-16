@@ -70,6 +70,13 @@ import {
     type MeetingPlan,
 } from "./meetings.js";
 import { MCP_TOOLS_RULE, ORBIT_PERSONA } from "./persona.js";
+import {
+    checkRevision,
+    nextRevision,
+    revisionText,
+    selfPromptBlock,
+    type PromptRevision,
+} from "./selfPrompt.js";
 import { correctMemory as applyMemoryCorrection, type MemoryCorrection } from "./memory.js";
 import { deriveBoard } from "./board.js";
 import {
@@ -174,6 +181,14 @@ export class Orchestrator {
     private tickCount = 0;
     private persona = "";
     /**
+     * Orbit's own operating notes, and the append-only history behind them.
+     * Held here for the same reason the persona is: the prompt is assembled at
+     * session start, so a revision made mid-session is on disk immediately and
+     * in the prompt at the next one.
+     */
+    private selfPrompt = "";
+    private promptRevisions: PromptRevision[] = [];
+    /**
      * Orbit's own development history. Not part of `OrbitState`: the renderer
      * has nothing to draw with it, and it only matters while a system message is
      * being assembled. Re-read on every session build so a reflection that ran
@@ -216,6 +231,8 @@ export class Orchestrator {
 
     async start(): Promise<void> {
         this.persona = this.disk.loadPersona();
+        this.selfPrompt = this.disk.loadSystemPrompt();
+        this.promptRevisions = this.disk.loadPromptRevisions();
         this.proposals = this.disk.loadProposals();
         this.activity = this.disk.loadActivity();
         this.store.update((state) => {
@@ -387,6 +404,11 @@ export class Orchestrator {
         if (this.persona) {
             parts.push(`<user_authored_personality>\n${this.persona}\n</user_authored_personality>`);
         }
+
+        // Orbit's own notes, and the floor restated under them. The two are
+        // assembled together on purpose: see `selfPrompt.ts`.
+        const self = selfPromptBlock(this.selfPrompt);
+        if (self) parts.push(self);
 
         const restored = this.restoredContext();
         if (restored) parts.push(restored);
@@ -1031,6 +1053,77 @@ export class Orchestrator {
                 }),
                 handler: async ({ activityId, status, note, waitingOn }) =>
                     this.updateActivity(activityId, status, note, waitingOn),
+            }),
+
+            defineTool("orbit_read_system_prompt", {
+                description:
+                    "Read your own editable operating notes: the slab of your system prompt that you wrote and can revise. Read it before revising it, and when the user asks why you behave a certain way. It does not contain your built-in orchestration or safety rules, which are compiled into the app and are not readable or writable from here.",
+                skipPermission: true,
+                parameters: z.object({}),
+                handler: async () => ({
+                    path: this.disk.systemPromptPath,
+                    revision: this.promptRevisions.at(-1)?.revision ?? 0,
+                    text: this.selfPrompt,
+                }),
+            }),
+
+            defineTool("orbit_revise_system_prompt", {
+                description:
+                    "Rewrite your own operating notes. Use it when the user corrects you in a way that generalises into a rule about how you work, for instance telling you that his corporate card statements are work mail and not to be filtered out. A fact about him goes to orbit_remember instead; this is for instructions to yourself. Pass the whole file as you want it to read afterwards, not a patch. Every revision is versioned with its reason and can be rolled back. It takes effect at your next session start, like persona.md.",
+                skipPermission: true,
+                parameters: z.object({
+                    text: z
+                        .string()
+                        .describe(
+                            "The complete new text of the notes, in markdown. It replaces the file wholesale, so carry forward anything still true.",
+                        ),
+                    reason: z
+                        .string()
+                        .describe(
+                            "One line: what changed and why. This is what makes a bad revision identifiable later, so name the correction, not the edit.",
+                        ),
+                    author: z
+                        .enum(["orbit", "user"])
+                        .optional()
+                        .describe("Who asked for it. Defaults to 'orbit'. Use 'user' when he dictated the wording."),
+                }),
+                handler: async ({ text, reason, author }) => this.reviseSystemPrompt(text, reason, author ?? "orbit"),
+            }),
+
+            defineTool("orbit_list_prompt_revisions", {
+                description:
+                    "List the history of your operating notes, oldest first: when each revision landed, who asked for it and the one-line reason. Read it before rolling back, and when the user asks what you have changed about yourself.",
+                skipPermission: true,
+                parameters: z.object({
+                    full: z
+                        .boolean()
+                        .optional()
+                        .describe("True to include the whole text of each revision. Defaults to reasons only."),
+                }),
+                handler: async ({ full }) => ({
+                    path: this.disk.promptRevisionsPath,
+                    revisions: this.promptRevisions.map((entry) => ({
+                        revision: entry.revision,
+                        at: entry.at,
+                        author: entry.author,
+                        reason: entry.reason,
+                        ...(full ? { text: entry.text } : {}),
+                    })),
+                }),
+            }),
+
+            defineTool("orbit_rollback_system_prompt", {
+                description:
+                    "Put your operating notes back to an earlier revision, by number from orbit_list_prompt_revisions. The rollback is itself recorded as a new revision carrying the old text, so nothing is destroyed and a rollback can be rolled back.",
+                skipPermission: true,
+                parameters: z.object({
+                    revision: z.number().describe("The revision number to restore."),
+                    reason: z
+                        .string()
+                        .optional()
+                        .describe("Why, in a few words. Defaults to naming the revision being restored."),
+                }),
+                handler: async ({ revision, reason }) => this.rollbackSystemPrompt(revision, reason),
             }),
 
             defineTool("orbit_record_proposal", {
@@ -3044,6 +3137,62 @@ export class Orchestrator {
         }
 
         this.persistActivity();
+    }
+
+    // MARK: - The self-modifiable prompt
+
+    /**
+     * Land a revision of Orbit's own operating notes.
+     *
+     * The gate is `checkRevision` and nothing else: it is pure, it is tested,
+     * and refusing here rather than at the write means a rejected revision
+     * never reaches disk at all. The built-in persona is not touched by any
+     * path through this method; see the header of `selfPrompt.ts`.
+     */
+    reviseSystemPrompt(
+        text: string,
+        reason: string,
+        author: PromptRevision["author"],
+    ): Record<string, unknown> {
+        const checked = checkRevision(text, reason);
+        if (checked.error || !checked.text || !checked.reason) return { error: checked.error };
+
+        if (checked.text === this.selfPrompt.trim()) {
+            return { ok: true, note: "Already reads exactly that. Nothing recorded." };
+        }
+
+        const revision = nextRevision(this.promptRevisions, checked.text, checked.reason, author, new Date());
+        if (!this.disk.writePromptRevision(revision)) {
+            return { error: "Could not write the prompt file. Nothing changed." };
+        }
+
+        this.selfPrompt = revision.text;
+        this.promptRevisions.push(revision);
+        this.log({ kind: "prompt.revised", title: revision.reason, detail: `revision ${revision.revision}` });
+        return {
+            ok: true,
+            revision: revision.revision,
+            path: this.disk.systemPromptPath,
+            note: "In effect at your next session start, like persona.md. Say so rather than acting as if it already applies.",
+        };
+    }
+
+    /**
+     * Restore an earlier revision by writing it forward as a new one. Never
+     * rewinds the history: the record of the revision being rolled back stays
+     * exactly where it was, which is the only thing that makes "why did we
+     * change this back?" answerable later.
+     */
+    rollbackSystemPrompt(revision: number, reason?: string): Record<string, unknown> {
+        const text = revisionText(this.promptRevisions, revision);
+        if (text === undefined) {
+            const known = this.promptRevisions.map((entry) => entry.revision);
+            return {
+                error: `No revision ${revision}. On file: ${known.length > 0 ? known.join(", ") : "none"}.`,
+            };
+        }
+        const why = (reason ?? "").trim() || `Rolled back to revision ${revision}.`;
+        return this.reviseSystemPrompt(text, why, "orbit");
     }
 
     // MARK: - Evolution

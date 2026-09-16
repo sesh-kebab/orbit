@@ -217,6 +217,35 @@ the panel is narrow, so replies stay short, and real work goes to agents. If you
 `persona.md` is still exactly as it shipped, an update may refresh it to the newer template;
 change a single character and it is yours for good.
 
+### The prompt it writes itself
+
+`persona.md` is yours and Orbit never touches it. `~/.copilot/orbit/system-prompt.md` is
+Orbit's, and it may rewrite it. Corrective feedback that generalises into a rule about how
+it works, rather than a fact about you, lands there: *"a corporate card statement in a
+corporate inbox is work mail, stop filtering it out"* is neither a memory nor a persona
+line, and until now it had nowhere to go.
+
+Plain markdown, in the same directory as the evolution log, editable by hand with the app
+shut. Every accepted revision is appended to `system-prompt-revisions.jsonl` with a
+timestamp, the author, a one-line reason and the full text as it stood afterwards. A
+rollback writes an old text forward as a new revision rather than rewinding the file, so
+nothing is destroyed and a rollback can itself be rolled back. Orbit reaches it through
+`orbit_read_system_prompt`, `orbit_revise_system_prompt`, `orbit_list_prompt_revisions` and
+`orbit_rollback_system_prompt`. Revisions take effect at the next session start, like
+`persona.md`.
+
+**There is a floor, and it is not a request.** The built-in orchestration and safety rules
+are a compiled constant (`ORBIT_PERSONA` in `src/main/orchestrator/persona.ts`). No tool
+reads it, no tool writes it, and no revision path can reach it, so the worst a bad revision
+can do is add text. The floor is then restated immediately below the editable block and
+says that where the two conflict the built-in rules win. And revisions are checked before
+they land (`checkRevision` in `src/main/orchestrator/selfPrompt.ts`): a revision that tries
+to open or close one of the protected sections is refused, as is one with no stated reason,
+one that blanks the file and one over the size cap. Agents can read the notes and their
+history; revising and rolling back stay with Orbit, because a background job that can
+rewrite the operating notes of the process that spawned it is a loop with nobody in it.
+Run `npm run verify:prompt` for the negative cases.
+
 ### Saving the day's work
 
 Agents write files into Copilot's session scratch space, which is per-machine and vanishes
@@ -499,6 +528,7 @@ npm run typecheck        # main, renderer and the capture harness
 npm run build            # typecheck + bundle
 npm run verify:activity  # activity ledger, chase threshold, artifact paths
 npm run verify:calendar  # reading a calendar scan, and knowing when there isn't one
+npm run verify:prompt    # the self-modifiable prompt, and the floor it cannot edit away
 npm run capture:assets   # re-shoot every image in this README
 ```
 

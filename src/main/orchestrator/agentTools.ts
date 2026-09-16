@@ -45,6 +45,14 @@ export const AGENT_TOOL_NAMES: readonly string[] = [
     // Read-only context.
     "orbit_list_schedules",
     "orbit_list_leave",
+    // Orbit's own operating notes. An agent may read them and read their
+    // history, which is how the nightly reflection can tell whether a
+    // correction it is about to write down is already written down. Revising
+    // and rolling back stay with Orbit: a revision is supposed to come out of
+    // the user correcting Orbit to its face, and an agent is the one thing in
+    // the system that has never spoken to him.
+    "orbit_read_system_prompt",
+    "orbit_list_prompt_revisions",
 ];
 
 /**
@@ -69,6 +77,11 @@ export const FORBIDDEN_AGENT_TOOL_NAMES: readonly string[] = [
     "orbit_sync_workspace",
     "orbit_set_leave",
     "orbit_clear_leave",
+    // The prompt Orbit runs on. Reading it is allowed above; changing it is
+    // not, from an agent. A background job that can rewrite the operating
+    // notes of the process that spawned it is a loop with nobody in it.
+    "orbit_revise_system_prompt",
+    "orbit_rollback_system_prompt",
 ];
 
 export interface AgentToolSelection<T> {
