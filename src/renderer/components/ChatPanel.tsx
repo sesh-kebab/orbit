@@ -7,6 +7,7 @@ import { onScene } from "../scene.js";
 import { Icon } from "./Icon.js";
 import { Message, useAutoScroll } from "./Message.js";
 import { MissionControl } from "./MissionControl.js";
+import { onReaderOpen } from "../reader.js";
 import { NavRail } from "./NavRail.js";
 
 const QUICK_ACTIONS = [
@@ -43,6 +44,8 @@ export function ChatPanel({ state, mood, onClose, onTypingChange }: Props): Reac
     const [section, setSection] = useState<DeckSection>(() =>
         isDeckSection(state.settings.deckSection) ? state.settings.deckSection : "board",
     );
+    /** The document the viewer is showing. Set by a click on a file anywhere. */
+    const [reading, setReading] = useState<string | undefined>(undefined);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const scrollRef = useAutoScroll(state.messages.length + (state.messages.at(-1)?.text.length ?? 0));
     const palette = MOODS[mood];
@@ -65,6 +68,21 @@ export function ChatPanel({ state, mood, onClose, onTypingChange }: Props): Reac
                 }
                 const match = DECK_SECTIONS.find((id) => scene.endsWith(id));
                 if (match) setSection(match);
+            }),
+        [],
+    );
+
+    // A click on a deliverable, from a chat bubble or from the board, opens the
+    // viewer at it. It always opens the pane rather than toggling it: the click
+    // was on a document, and a click that closed the thing showing the document
+    // would be a click that did the opposite of what it said.
+    useEffect(
+        () =>
+            onReaderOpen((path) => {
+                setReading(path);
+                setSection("read");
+                setDeckOpen(true);
+                void window.orbit.setSettings({ deckSection: "read" });
             }),
         [],
     );
@@ -197,7 +215,7 @@ export function ChatPanel({ state, mood, onClose, onTypingChange }: Props): Reac
                 onSelect={chooseSection}
             />
 
-            {deckOpen && <MissionControl state={state} section={section} />}
+            {deckOpen && <MissionControl state={state} section={section} reading={reading} />}
 
             <div className="transcript" ref={scrollRef}>
                 {state.messages.map((message) => (

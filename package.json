@@ -53,6 +53,7 @@
         "verify:landed": "esbuild scripts/verify-landed.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-landed.mjs --log-level=warning && node node_modules/.cache/verify-landed.mjs",
         "verify:openitems": "esbuild scripts/verify-openitems.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-openitems.mjs --log-level=warning && node node_modules/.cache/verify-openitems.mjs",
         "landed": "node tools/landed.mjs",
+        "verify:design": "esbuild scripts/verify-design.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-design.mjs --log-level=warning && node node_modules/.cache/verify-design.mjs",
         "verify:prompt": "esbuild scripts/verify-prompt.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-prompt.mjs --log-level=warning && node node_modules/.cache/verify-prompt.mjs",
         "verify:memory": "esbuild scripts/verify-memory.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-memory.mjs --log-level=warning && node node_modules/.cache/verify-memory.mjs"
     },

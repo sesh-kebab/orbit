@@ -31,6 +31,7 @@ import {
     nextRevision,
     type PromptRevision,
 } from "./orchestrator/selfPrompt.js";
+import { DEFAULT_DESIGN_LANGUAGE } from "./orchestrator/design.js";
 
 const HISTORY_LIMIT = 400;
 
@@ -89,6 +90,9 @@ const PROMPT_REVISIONS_PATH = join(ORBIT_HOME_DIR, "system-prompt-revisions.json
  * it, and a scheduled job should not have to know where Electron keeps its
  * application support directory.
  */
+const DESIGN_PATH = join(ORBIT_HOME_DIR, "design-language.md");
+const DESIGN_REVISIONS_PATH = join(ORBIT_HOME_DIR, "design-language-revisions.jsonl");
+
 const SOUL_PATH = join(ORBIT_HOME_DIR, "SOUL.md");
 
 /** Never read more of it than the prompt block could possibly quote. */
@@ -147,6 +151,24 @@ export interface InteractionRecord {
  * Everything Orbit remembers between launches lives here as plain files, so a
  * curious human can read or edit any of it without the app running.
  */
+/**
+ * Both revision logs are the same shape and read the same way, so they read
+ * through one function: a second copy of this would be a second place for the
+ * cap and the validity check to drift.
+ */
+function readRevisions(path: string): PromptRevision[] {
+    try {
+        return readFileSync(path, "utf8")
+            .split("\n")
+            .filter(Boolean)
+            .map((line) => JSON.parse(line) as PromptRevision)
+            .filter((entry) => typeof entry?.revision === "number" && typeof entry?.text === "string")
+            .slice(-REVISION_CAP);
+    } catch {
+        return [];
+    }
+}
+
 export class Persistence {
     private readonly dir: string;
 
@@ -512,16 +534,7 @@ export class Persistence {
     }
 
     loadPromptRevisions(): PromptRevision[] {
-        try {
-            return readFileSync(PROMPT_REVISIONS_PATH, "utf8")
-                .split("\n")
-                .filter(Boolean)
-                .map((line) => JSON.parse(line) as PromptRevision)
-                .filter((entry) => typeof entry?.revision === "number" && typeof entry?.text === "string")
-                .slice(-REVISION_CAP);
-        } catch {
-            return [];
-        }
+        return readRevisions(PROMPT_REVISIONS_PATH);
     }
 
     /**
@@ -544,6 +557,47 @@ export class Persistence {
             appendFileSync(PROMPT_REVISIONS_PATH, `${JSON.stringify(revision)}\n`, "utf8");
         } catch (error) {
             console.error("[orbit] could not record the prompt revision:", error);
+        }
+        return true;
+    }
+
+    // MARK: - The design language
+
+    get designLanguagePath(): string {
+        return DESIGN_PATH;
+    }
+
+    loadDesignLanguage(): string {
+        if (!existsSync(DESIGN_PATH)) {
+            const seeded = this.writeDesignRevision(
+                nextRevision([], DEFAULT_DESIGN_LANGUAGE.trim(), "Seeded on first run.", "seed", new Date()),
+            );
+            if (!seeded) return DEFAULT_DESIGN_LANGUAGE.trim();
+        }
+        try {
+            return readFileSync(DESIGN_PATH, "utf8").trim();
+        } catch {
+            return "";
+        }
+    }
+
+    loadDesignRevisions(): PromptRevision[] {
+        return readRevisions(DESIGN_REVISIONS_PATH);
+    }
+
+    /** Same order and the same reasoning as `writePromptRevision`. */
+    writeDesignRevision(revision: PromptRevision): boolean {
+        try {
+            mkdirSync(ORBIT_HOME_DIR, { recursive: true });
+            writeFileSync(DESIGN_PATH, `${revision.text}\n`, "utf8");
+        } catch (error) {
+            console.error("[orbit] could not write the design language:", error);
+            return false;
+        }
+        try {
+            appendFileSync(DESIGN_REVISIONS_PATH, `${JSON.stringify(revision)}\n`, "utf8");
+        } catch (error) {
+            console.error("[orbit] could not record the design revision:", error);
         }
         return true;
     }

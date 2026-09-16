@@ -23,13 +23,17 @@ import { elapsedLabel } from "../mood.js";
 import { BoardTab } from "./Board.js";
 import { Icon } from "./Icon.js";
 import { AgentRow } from "./Message.js";
+import { Reader } from "./Reader.js";
 
 export function MissionControl({
     state,
     section,
+    reading,
 }: {
     state: OrbitState;
     section: DeckSection;
+    /** The document the viewer is showing, when there is one. */
+    reading?: string;
 }): React.JSX.Element {
     return (
         <div className="deck">
@@ -37,6 +41,7 @@ export function MissionControl({
                 {section === "board" && <BoardTab state={state} />}
                 {section === "work" && <WorkSection state={state} />}
                 {section === "memory" && <MemoryTab state={state} />}
+                {section === "read" && <Reader path={reading} />}
                 {section === "log" && <HistoryTab state={state} />}
                 {section === "look" && <LookTab state={state} />}
             </div>

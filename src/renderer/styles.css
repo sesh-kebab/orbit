@@ -948,6 +948,54 @@ body,
     flex: 1;
     min-height: 0;
 }
+
+/*
+ * The viewer fills its section rather than scrolling inside the deck body: the
+ * document does its own scrolling, and a scrollbar inside a scrollbar is a
+ * document you can never quite reach the bottom of.
+ */
+.deck-body:has(> .reader) {
+    overflow: hidden;
+    padding: 0;
+}
+
+.reader {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+
+.reader-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--line);
+}
+
+.reader-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: calc(var(--chat-font-scale) * 12px);
+    color: var(--muted);
+}
+
+/*
+ * No border and no radius: the document supplies its own page, and a frame
+ * around it would read as a second window inside the panel, which is the thing
+ * the viewer exists to avoid.
+ */
+.reader-frame {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    border: 0;
+    background: #16141f;
+}
 .deck-foot {
     display: flex;
     align-items: center;

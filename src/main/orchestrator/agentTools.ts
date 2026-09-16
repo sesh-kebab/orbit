@@ -59,6 +59,11 @@ export const AGENT_TOOL_NAMES: readonly string[] = [
     // safe in a way revising is not, because nothing already in the file can be
     // changed by it.
     "orbit_append_soul",
+    // The design language reaches agents in their brief already. Reading it is
+    // allowed anyway, for the agent that is asked why a document looks as it
+    // does; revising it is not, for the same reason revising the prompt is not.
+    "orbit_read_design_language",
+    "orbit_list_design_revisions",
 ];
 
 /**
@@ -87,6 +92,8 @@ export const FORBIDDEN_AGENT_TOOL_NAMES: readonly string[] = [
     // not, from an agent. A background job that can rewrite the operating
     // notes of the process that spawned it is a loop with nobody in it.
     "orbit_revise_system_prompt",
+    "orbit_revise_design_language",
+    "orbit_rollback_design_language",
     "orbit_rollback_system_prompt",
 ];
 

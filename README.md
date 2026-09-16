@@ -263,6 +263,37 @@ It is loaded into every session alongside the persona. When it outgrows its cont
 the oldest entries drop out first, because the point of the file is who Orbit is now. Edit
 it by hand whenever you want; Orbit reads whatever is there.
 
+### What agents hand you, and reading it here
+
+The content of an agent's deliverable was never the problem. The shape was: a thousand
+words of markdown, four headings, everything in it equally important. So agents are given a
+design language, and they produce one self-contained HTML file instead: inline CSS, inline
+images, no fetch of any kind. It defines a type scale, the app's own colours, an 8px
+spacing grid, and the five components deliverables have actually needed, which are a
+severity-ranked findings list, evidence quoted with its timestamp, an owner-and-date table,
+a before-and-after, and one callout for the single thing that matters most. Structure
+first: the top of the document is the answer, and anything longer than a paragraph goes in
+a `<details>`.
+
+It lives at `~/.copilot/orbit/design-language.md` and evolves like the other two files.
+`orbit_revise_design_language` versions it with a reason and `orbit_rollback_design_language`
+puts it back. Two rules are not in the file and cannot be revised away, because
+`designBlock` appends them under whatever the file says every time a brief is built: the
+document must be one self-contained file, and it must say what it is and where its claims
+came from.
+
+Clicking one opens it in the panel, in the `read` section of the rail, not in a browser.
+The document goes into an iframe with an empty `sandbox` attribute, which is the strongest
+form it has: opaque origin, no scripting, no forms, no navigation, no popups. On top of
+that it gets a `default-src 'none'` content security policy prepended to its head, allowing
+`data:` for images and fonts and inline styles and nothing else, so a document that links a
+CDN renders without the parts that were not in it rather than phoning a server. The
+renderer around it already runs with context isolation on and node integration off.
+
+Markdown deliverables written before any of this open in the same viewer, rendered with the
+same typography, so an old folder of `.md` files is not orphaned by the change. Run
+`npm run verify:design` for the containment cases.
+
 ### Saving the day's work
 
 Agents write files into Copilot's session scratch space, which is per-machine and vanishes
@@ -513,22 +544,27 @@ src/
       permissions.ts         auto-approve policy and human-readable prompts
       persona.ts             orchestrator persona and agent brief
       selfPrompt.ts          the notes Orbit revises, and the floor it cannot
+      design.ts              how deliverables look, and the floor under that
       soul.ts                SOUL.md entries and the character block
       evolution.ts           evolution log digest and proposal state for the prompt
       schedules.ts           cadences and the daily briefing template
       meetings.ts            meeting shape, prep briefs, calendar plan parsing
       describe.ts            tool calls → readable activity lines
       artifacts.ts           bare file names in a report → absolute, clickable paths
+  artifactDoc.ts             reading a deliverable off disk for the viewer
   preload/index.ts           context-isolated bridge
   renderer/
     App.tsx                  layout, dragging, click-through
     markdown.ts              markdown → blocks and inline spans
     paths.ts                 finding file paths in message text
+    reader.ts                routing a click on a file to the viewer
+    readerDoc.ts             the sandboxed document, and the policy on it
     components/Buddy.tsx     the character
     components/ChatPanel.tsx chat, composer, header, dictation, the permanent rail
     components/Message.tsx   bubbles, path chips, spawn/request/completion cards
-    components/NavRail.tsx   the five sections, and what each badges before it is opened
-    components/MissionControl.tsx  board / work / memory / log / look
+    components/NavRail.tsx   the six sections, and what each badges before it is opened
+    components/Reader.tsx    deliverables, rendered in the panel
+    components/MissionControl.tsx  board / work / memory / read / log / look
 tools/capture/               dev-only harness that renders the images in this README
 ```
 
@@ -548,6 +584,7 @@ npm run build            # typecheck + bundle
 npm run verify:activity  # activity ledger, chase threshold, artifact paths
 npm run verify:calendar  # reading a calendar scan, and knowing when there isn't one
 npm run verify:prompt    # the self-modifiable prompt, and the floor it cannot edit away
+npm run verify:design    # the deliverable design language, and what the viewer contains
 npm run capture:assets   # re-shoot every image in this README
 ```
 

@@ -10,6 +10,8 @@
  * which is appended to this at session start. See `DEFAULT_PERSONA` in
  * `persistence.ts` for the template a fresh install is seeded with.
  */
+import { designBlock } from "./design.js";
+
 export const ORBIT_PERSONA = `
 <identity>
 You are Orbit — a small, expressive character living on the user's desktop. You are their
@@ -160,6 +162,13 @@ You are working autonomously — the user is not watching your output, they see 
   absolute paths.
 `.trim();
 
-export function buildAgentPrompt(task: string): string {
-    return `${AGENT_PREAMBLE}\n\n<task>\n${task}\n</task>`;
+/**
+ * The design language sits between the preamble and the task, not after it: an
+ * agent reads the task last and starts from there, and a formatting rule it
+ * meets after the task reads as an afterthought to it.
+ */
+export function buildAgentPrompt(task: string, design?: string): string {
+    const block = designBlock(design);
+    const parts = [AGENT_PREAMBLE, ...(block ? [block] : []), `<task>\n${task}\n</task>`];
+    return parts.join("\n\n");
 }

@@ -88,10 +88,13 @@ function posed(patch: Partial<OrbitState> = {}, section: DeckSection = "board"):
     const markup = render(posed());
 
     check("the rail has one button per section", count(markup, 'class="rail-tab'), DECK_SECTIONS.length);
-    check("five sections, no more", DECK_SECTIONS.length, 5);
+    // The cap is the point, not the number: additional UI was allowed, a more
+    // complicated application was not. Six is five plus the viewer, which is a
+    // place the user is sent to by clicking a file rather than a new idea.
+    check("six sections, no more", DECK_SECTIONS.length, 6);
     ok("the rail is a landmark", markup.includes('aria-label="Mission control sections"'));
 
-    for (const label of ["board", "work", "memory", "log", "look"]) {
+    for (const label of ["board", "work", "memory", "read", "log", "look"]) {
         ok(`the rail carries "${label}"`, markup.includes(`class="rail-label">${label}<`));
     }
 

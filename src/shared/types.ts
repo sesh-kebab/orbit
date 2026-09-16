@@ -653,15 +653,36 @@ export const WINDOW_STATE_VERSION = 1;
 /**
  * The sections of Mission Control, in rail order.
  *
- * Five, and none of them invented to fill the rail. `work` is the old `agents`
+ * Six, and none of them invented to fill the rail. `read` is the viewer: it is
+ * a section rather than a window because a deliverable is one more thing Orbit
+ * has for him, and everything else in that category is already a section. `work` is the old `agents`
  * and `watchers` tabs folded together: two stores, one question.
  */
-export const DECK_SECTIONS = ["board", "work", "memory", "log", "look"] as const;
+export const DECK_SECTIONS = ["board", "work", "memory", "read", "log", "look"] as const;
 
 export type DeckSection = (typeof DECK_SECTIONS)[number];
 
 export function isDeckSection(value: unknown): value is DeckSection {
     return typeof value === "string" && (DECK_SECTIONS as readonly string[]).includes(value);
+}
+
+/**
+ * A document read off disk for the in-app viewer.
+ *
+ * `text` is exactly what was in the file and nothing has been done to it. It is
+ * the renderer's job to contain it, because the renderer is where it is put on
+ * screen and a sanitising pass here would only give the illusion that it is
+ * safe by the time it gets there.
+ */
+export interface ArtifactDoc {
+    ok: boolean;
+    /** Absolute, resolved. */
+    path: string;
+    /** File name, which is all the title there is until the document says otherwise. */
+    title: string;
+    kind: "html" | "markdown";
+    text: string;
+    error?: string;
 }
 
 export interface Settings {
@@ -883,6 +904,8 @@ export interface OrbitApi {
     inspectPaths(paths: string[]): Promise<PathInfo[]>;
     /** Open a file in the user's editor, or a directory in Finder. */
     openPath(path: string): Promise<{ ok: boolean; error?: string }>;
+    /** Read a deliverable for the in-app viewer. HTML and markdown only. */
+    readArtifact(path: string): Promise<ArtifactDoc>;
     /** Show a path in Finder with the item selected. */
     revealPath(path: string): Promise<{ ok: boolean; error?: string }>;
     /** Open an http(s) link in the user's browser. Other schemes are refused. */
