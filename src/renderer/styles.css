@@ -1635,6 +1635,53 @@ body,
     border-top: 1px solid rgba(255, 255, 255, 0.16);
 }
 
+/* A table in a bubble is still a table. It keeps its own width and scrolls
+   sideways rather than being crushed into columns one word wide. */
+.md-table-scroll {
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+.md-table {
+    border-collapse: collapse;
+    font-size: calc(var(--chat-font-scale) * 12px);
+}
+.md-table th,
+.md-table td {
+    padding: 4px 10px 4px 0;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+.md-table th:last-child,
+.md-table td:last-child {
+    padding-right: 0;
+}
+.md-table th {
+    font-size: calc(var(--chat-font-scale) * 9.5px);
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.6);
+    white-space: nowrap;
+}
+.md-table .md-center {
+    text-align: center;
+}
+.md-table .md-right {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Task items drop the bullet: the box is the marker. */
+.md-tasks li:has(> .md-task) {
+    list-style: none;
+}
+.md-task {
+    margin: 0 6px 0 0;
+    accent-color: var(--accent, #9d8cff);
+    vertical-align: baseline;
+}
+
 /* ---------- look settings ---------- */
 
 .setting {

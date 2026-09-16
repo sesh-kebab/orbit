@@ -188,6 +188,65 @@ function check(name: string, condition: boolean, detail?: unknown): void {
     check("and html goes through unparsed", readerDocument("html", "<p>raw</p>", "x.html").includes("<p>raw</p>"));
 }
 
+// MARK: - GitHub's markdown, which is what the old deliverables are written in
+
+{
+    // The bug this is here for: a .md deliverable full of status tables opened
+    // in the viewer and showed its pipes. A table is the one construct where
+    // the markup is the information, so failing to build it is not a cosmetic
+    // loss, it is the table's content turned back into noise.
+    const table = markdownDocument(
+        "| # | Workstream | Status |\n|---|---|:--:|\n| 1 | **Data** | Amber |\n| 2 | Search | Paused |\n",
+        "preread.md",
+    );
+    check("a pipe table becomes a table", table.includes("<table>"));
+    check("with a header row", table.includes("<th>Workstream</th>"));
+    check("and body rows", table.includes("<td>Amber</td>") || table.includes('<td class="center">Amber</td>'));
+    check("both of them", table.includes("Search") && table.includes("Paused"));
+    check("alignment comes off the delimiter row", table.includes('class="center"'));
+    check("inline markup inside a cell still runs", table.includes("<strong>Data</strong>"));
+    check("and no pipe survives as prose", !table.includes("<p>|"));
+    check("it scrolls rather than being crushed", table.includes('class="scroller"'));
+
+    // A table is only a table once the delimiter row says so, which is what
+    // keeps a half-streamed one from flickering into a one-row grid.
+    const lonely = markdownDocument("| just | some | pipes |\n\nand prose.\n", "x.md");
+    check("a header row with nothing under it stays text", !lonely.includes("<table>"));
+
+    // GitHub's own rule: the delimiter has to declare the same number of
+    // columns the header did, or none of it is a table.
+    const mismatched = markdownDocument("| a | b | c |\n|---|---|\n", "x.md");
+    check("a mismatched delimiter is not a table", !mismatched.includes("<table>"));
+
+    const ragged = markdownDocument("| a | b |\n|---|---|\n| only one |\n", "x.md");
+    check("a short row is padded rather than rejected", ragged.includes("<table>"));
+    check("and its missing cell is empty", ragged.includes("<td></td>"));
+
+    const escaped = markdownDocument("| a | b |\n|---|---|\n| x \\| y | z |\n", "x.md");
+    check("an escaped pipe is content, not a boundary", escaped.includes("<td>x | y</td>"));
+
+    const tasks = markdownDocument("- [ ] open\n- [x] done\n", "x.md");
+    check("a task list gets boxes", tasks.includes('<input type="checkbox"'));
+    check("a ticked one is ticked", tasks.includes("disabled checked"));
+    check("and they are never interactive", !/<input(?![^>]*disabled)/.test(tasks));
+    check("the brackets do not survive as text", !tasks.includes("[x]") && !tasks.includes("[ ]"));
+
+    // The rest of what that document leans on, which all worked already and is
+    // asserted here so a change to the table path cannot quietly cost it.
+    const rest = markdownDocument(
+        "#### Deep\n\n> quoted\n\n```js\nconst x = 1;\n```\n\n- top\n  - nested\n",
+        "x.md",
+    );
+    check("headings below h3 render", rest.includes("<h4>Deep</h4>"));
+    check("blockquotes render", rest.includes("<blockquote>"));
+    check("fenced code renders", rest.includes("<pre><code>const x = 1;</code></pre>"));
+    check("nested lists nest", rest.includes("<ul><li><p>nested"));
+
+    // Prose keeps the measure; a table is allowed to be wider than it.
+    check("the measure moved to the text blocks", table.includes("max-width: 62ch"));
+    check("and off the document wrapper", table.includes(".doc { max-width: 100%; }"));
+}
+
 // MARK: - Report
 
 if (failures.length > 0) {
