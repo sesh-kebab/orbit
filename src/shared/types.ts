@@ -600,6 +600,13 @@ export interface HistoryEntry {
         | "proposal.raised"
         | "proposal.updated"
         /**
+         * A revision of Orbit's own operating notes, and an addition to SOUL.md.
+         * In the timeline because a prompt that edits itself with no visible
+         * trace is the one change nobody could audit from inside the app.
+         */
+        | "prompt.revised"
+        | "soul.appended"
+        /**
          * Heads-ups armed for today's meetings, and each one as it fires.
          *
          * Recorded because the feature was otherwise unobservable: arming only

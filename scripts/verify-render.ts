@@ -18,8 +18,9 @@
  */
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MissionControl, railState } from "../src/renderer/components/MissionControl.js";
-import { DECK_SECTIONS, type DeckSection, type OrbitState } from "../src/shared/types.js";
+import { MissionControl } from "../src/renderer/components/MissionControl.js";
+import { NavRail, railState } from "../src/renderer/components/NavRail.js";
+import { DECK_SECTIONS, isDeckSection, type DeckSection, type OrbitState } from "../src/shared/types.js";
 import { AGENTS, EPOCH, REQUEST, SCHEDULES, baseState } from "../tools/capture/demo.js";
 
 let passed = 0;
@@ -37,8 +38,28 @@ function ok(what: string, condition: boolean): void {
     check(what, condition, true);
 }
 
-function render(state: OrbitState): string {
-    return renderToStaticMarkup(createElement(MissionControl, { state }));
+/**
+ * The rail and the pane, composed the way `ChatPanel` composes them. The rail
+ * moved out of Mission Control and is drawn permanently above it, so rendering
+ * Mission Control alone would no longer render the thing half these checks are
+ * about.
+ */
+function render(state: OrbitState, open = true): string {
+    const section = isDeckSection(state.settings.deckSection) ? state.settings.deckSection : "board";
+    return renderToStaticMarkup(
+        createElement(
+            "div",
+            null,
+            createElement(NavRail, {
+                state,
+                section,
+                open,
+                orientation: "bar" as const,
+                onSelect: () => undefined,
+            }),
+            open ? createElement(MissionControl, { state, section }) : undefined,
+        ),
+    );
 }
 
 /** Markup with the tags taken out, which is what the user actually reads. */
@@ -86,6 +107,29 @@ function posed(patch: Partial<OrbitState> = {}, section: DeckSection = "board"):
     // same time as the watcher list; that was the whole complaint.
     ok("the deck has a single scrolling pane", count(markup, 'class="deck-body"') === 1);
     ok("the foot survives the rail", markup.includes('class="deck-foot"'));
+}
+
+// MARK: - The rail is permanent
+
+{
+    // The rail outlives the pane it opens. With Mission Control closed there is
+    // still a full rail on screen, which is the entire point of moving it out.
+    const shut = render(posed(), false);
+
+    check("the rail is drawn with the pane closed", count(shut, 'class="rail-tab'), DECK_SECTIONS.length);
+    ok("and the pane really is closed", !shut.includes('class="deck-body"'));
+    check("nothing claims to be the current section", count(shut, 'aria-current="page"'), 0);
+    check("and nothing is drawn as selected", count(shut, 'class="rail-tab on"'), 0);
+
+    // Badges are the reason it is permanent: a decision waiting on him has to
+    // be visible while he is reading the transcript, not only once he opens the
+    // thing that would have told him.
+    const blocked = render(posed({ agents: [AGENTS.flaky], requests: [REQUEST] }), false);
+    ok("a blocked agent still shows through a closed pane", blocked.includes("rail-badge attention"));
+
+    // Horizontal, because the panel floor is 440px wide and the vertical rail
+    // took 58px of it away from the transcript permanently.
+    ok("the permanent rail is the horizontal one", shut.includes('class="deck-rail bar"'));
 }
 
 // MARK: - One section at a time

@@ -783,11 +783,11 @@ body,
 .deck {
     border-bottom: 1px solid var(--line);
     display: flex;
-    flex-direction: row;
+    flex-direction: column;
     align-items: stretch;
     /*
      * Two shares to the transcript's one, from a zero basis so the split is
-     * the same whichever section is open — a flex basis of `auto` would have
+     * the same whichever section is open. A flex basis of `auto` would have
      * let the board's own height decide how much of the panel it took, which
      * is how a tall section starves the chat and a short one wastes the room.
      * Capped so the chat never disappears entirely in a short window.
@@ -798,20 +798,30 @@ body,
 }
 
 /*
- * The rail. Vertical because the thing that was scarce is vertical: a row of
- * tabs spends height to save width, which is exactly the wrong trade in a
- * window this shape.
+ * The rail. Two orientations, one set of buttons.
+ *
+ * `column` is the original: vertical because inside a wide pane the thing that
+ * is scarce is vertical, and a row of tabs spends height to save width.
+ *
+ * `bar` is what the permanent rail uses, and the trade runs the other way.
+ * The rail is now always on screen, above the transcript, and the panel's
+ * floor is 440px wide: 58px of permanent vertical rail is 13% of the chat
+ * taken out of the column that is read, all day, whether or not Mission
+ * Control is open. Height is the cheaper currency here, and one 34px strip
+ * buys the width back.
  */
 .deck-rail {
     display: flex;
-    flex-direction: column;
     gap: 1px;
+}
+.deck-rail.column {
+    flex-direction: column;
     flex: none;
     width: 58px;
     padding: 6px 5px;
     border-right: 1px solid var(--line);
     /*
-     * Every section has to be reachable without scrolling — a rail you scroll
+     * Every section has to be reachable without scrolling. A rail you scroll
      * is the thing this replaced. Five items at 33px is 165px, and that is
      * what sets the window's minimum height: below it the deck's two-thirds
      * share stops being tall enough to hold them all. It can still scroll, as
@@ -821,11 +831,35 @@ body,
     overflow-x: hidden;
 }
 
-/* Pushes appearance to the foot of the rail when there is room, and gives up
-   its own height first when there is not. */
+/*
+ * Horizontal, and permanent. It never scrolls: five items across 440px have
+ * room to spare, and a rail that can hide one of its own sections is worse
+ * than a rail that is slightly tight.
+ */
+.deck-rail.bar {
+    flex-direction: row;
+    align-items: stretch;
+    flex: none;
+    padding: 4px 8px 5px;
+    border-bottom: 1px solid var(--line);
+}
+.deck-rail.bar .rail-tab {
+    flex-direction: row;
+    gap: 5px;
+    padding: 4px 9px;
+    min-width: 0;
+}
+/* Room for the badge to hang off the icon without clipping on the neighbour. */
+.deck-rail.bar .rail-mark {
+    margin-right: 2px;
+}
+
+/* Pushes appearance to the end of the rail when there is room, and gives up
+   its own size first when there is not. */
 .rail-spacer {
     flex: 1 1 0;
     min-height: 0;
+    min-width: 0;
 }
 
 .rail-tab {
@@ -906,16 +940,6 @@ body,
     border-radius: 50%;
     background: #8fd8ff;
     box-shadow: none;
-}
-
-.deck-main {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    /* Without this a long thread title stretches the flex item and pushes the
-       rail off the left edge instead of ellipsing. */
-    min-width: 0;
-    min-height: 0;
 }
 
 .deck-body {

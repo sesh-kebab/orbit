@@ -31,7 +31,7 @@ session with full tool access, and tells you where they got to.
 <table>
 <tr>
 <td width="42%" valign="top">
-  <img src="assets/mission-control.png" alt="Mission control: a left-hand nav rail with board, work, memory, log and look, and the board open beside it showing what is waiting on you, what is waiting on others, and what is running" width="100%">
+  <img src="assets/mission-control.png" alt="Mission control: a nav rail with board, work, memory, log and look, and the board open showing what is waiting on you, what is waiting on others, and what is running" width="100%">
 </td>
 <td valign="top">
 
@@ -216,6 +216,52 @@ not suit you. The compiled persona only fixes what is true of Orbit whoever is r
 the panel is narrow, so replies stay short, and real work goes to agents. If your
 `persona.md` is still exactly as it shipped, an update may refresh it to the newer template;
 change a single character and it is yours for good.
+
+### The prompt it writes itself
+
+`persona.md` is yours and Orbit never touches it. `~/.copilot/orbit/system-prompt.md` is
+Orbit's, and it may rewrite it. Corrective feedback that generalises into a rule about how
+it works, rather than a fact about you, lands there: *"a corporate card statement in a
+corporate inbox is work mail, stop filtering it out"* is neither a memory nor a persona
+line, and until now it had nowhere to go.
+
+Plain markdown, in the same directory as the evolution log, editable by hand with the app
+shut. Every accepted revision is appended to `system-prompt-revisions.jsonl` with a
+timestamp, the author, a one-line reason and the full text as it stood afterwards. A
+rollback writes an old text forward as a new revision rather than rewinding the file, so
+nothing is destroyed and a rollback can itself be rolled back. Orbit reaches it through
+`orbit_read_system_prompt`, `orbit_revise_system_prompt`, `orbit_list_prompt_revisions` and
+`orbit_rollback_system_prompt`. Revisions take effect at the next session start, like
+`persona.md`.
+
+**There is a floor, and it is not a request.** The built-in orchestration and safety rules
+are a compiled constant (`ORBIT_PERSONA` in `src/main/orchestrator/persona.ts`). No tool
+reads it, no tool writes it, and no revision path can reach it, so the worst a bad revision
+can do is add text. The floor is then restated immediately below the editable block and
+says that where the two conflict the built-in rules win. And revisions are checked before
+they land (`checkRevision` in `src/main/orchestrator/selfPrompt.ts`): a revision that tries
+to open or close one of the protected sections is refused, as is one with no stated reason,
+one that blanks the file and one over the size cap. Agents can read the notes and their
+history; revising and rolling back stay with Orbit, because a background job that can
+rewrite the operating notes of the process that spawned it is a loop with nobody in it.
+Run `npm run verify:prompt` for the negative cases.
+
+### SOUL.md
+
+`~/.copilot/orbit/SOUL.md` is the third file in the set, and it is deliberately not like the
+other two. `persona.md` is how you want Orbit to behave and only you write it.
+`system-prompt.md` is operating instructions and gets revised when a rule in it turns out to
+be wrong. `SOUL.md` is identity: who Orbit has become from working with you rather than
+somebody else, and it is append-only, so nothing already in it is ever rewritten.
+
+The nightly self-reflection adds one dated entry, in the first person, about what the day
+taught it about working with you. Not a summary of the day and not a list of what shipped:
+the evolution log already has both. Entries that flatter you or Orbit are worse than no
+entry, which the tool description and the reflection's brief both say outright.
+
+It is loaded into every session alongside the persona. When it outgrows its context budget
+the oldest entries drop out first, because the point of the file is who Orbit is now. Edit
+it by hand whenever you want; Orbit reads whatever is there.
 
 ### Saving the day's work
 
@@ -435,10 +481,18 @@ chip goes through the exact same path as typing.
 <details>
 <summary><b>Observability and layout</b></summary>
 
-Mission control (the ▤ button) has **Agents** (every run, its brief, working directory,
-full step feed, tokens and final report), **Watchers**, **Memory**, **Log** (an append-only
-timeline, also on disk as `history.jsonl`) and **Look**. The footer carries lifetime run,
-step and token counts.
+The nav rail sits under the chat panel header and never goes away: **Board**, **Work**
+(every run, its brief, working directory, full step feed, tokens and final report, plus the
+watchers), **Memory**, **Log** (an append-only timeline, also on disk as `history.jsonl`)
+and **Look**. Clicking a section opens mission control below the rail; clicking the section
+already showing closes it again. It is a horizontal strip rather than the vertical rail it
+grew out of, because the panel is 440px wide at its floor and a permanent 58px column would
+spend a seventh of the chat's reading width on navigation.
+
+Because the rail is always drawn, its badges are too: a red count means something will not
+move until you do, and it is visible while you are reading the transcript rather than only
+once you open the thing that would have told you. The footer carries lifetime run, step and
+token counts.
 
 ```
 src/
@@ -458,6 +512,8 @@ src/
       agentRunner.ts         one delegated task = one Copilot session
       permissions.ts         auto-approve policy and human-readable prompts
       persona.ts             orchestrator persona and agent brief
+      selfPrompt.ts          the notes Orbit revises, and the floor it cannot
+      soul.ts                SOUL.md entries and the character block
       evolution.ts           evolution log digest and proposal state for the prompt
       schedules.ts           cadences and the daily briefing template
       meetings.ts            meeting shape, prep briefs, calendar plan parsing
@@ -469,9 +525,10 @@ src/
     markdown.ts              markdown → blocks and inline spans
     paths.ts                 finding file paths in message text
     components/Buddy.tsx     the character
-    components/ChatPanel.tsx chat, composer, header, dictation
+    components/ChatPanel.tsx chat, composer, header, dictation, the permanent rail
     components/Message.tsx   bubbles, path chips, spawn/request/completion cards
-    components/MissionControl.tsx  agents / watchers / memory / log / look
+    components/NavRail.tsx   the five sections, and what each badges before it is opened
+    components/MissionControl.tsx  board / work / memory / log / look
 tools/capture/               dev-only harness that renders the images in this README
 ```
 
@@ -490,6 +547,7 @@ npm run typecheck        # main, renderer and the capture harness
 npm run build            # typecheck + bundle
 npm run verify:activity  # activity ledger, chase threshold, artifact paths
 npm run verify:calendar  # reading a calendar scan, and knowing when there isn't one
+npm run verify:prompt    # the self-modifiable prompt, and the floor it cannot edit away
 npm run capture:assets   # re-shoot every image in this README
 ```
 

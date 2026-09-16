@@ -1,18 +1,30 @@
 import { useEffect, useRef, useState } from "react";
-import type { DictationSupport, OrbitState } from "../../shared/types.js";
-import { isLive } from "../../shared/types.js";
+import type { DeckSection, DictationSupport, OrbitState } from "../../shared/types.js";
+import { DECK_SECTIONS, isDeckSection } from "../../shared/types.js";
 import { MOODS, headline } from "../mood.js";
 import type { Mood } from "../../shared/types.js";
 import { onScene } from "../scene.js";
 import { Icon } from "./Icon.js";
 import { Message, useAutoScroll } from "./Message.js";
 import { MissionControl } from "./MissionControl.js";
+import { NavRail } from "./NavRail.js";
 
 const QUICK_ACTIONS = [
     "What's running?",
     "Brief me at 8:30 every morning",
     "Summarise this repo",
     "Watch my repo for failing tests every 30m",
+];
+
+/**
+ * Scene names from the capture harness, which predate the rail and still say
+ * `agents` and `watchers`. They are aliases rather than a rename so an old
+ * capture script keeps posing the panel at the section it meant.
+ */
+const SCENE_ALIASES: Array<[string, DeckSection]> = [
+    ["agents", "work"],
+    ["watchers", "work"],
+    ["history", "log"],
 ];
 
 interface Props {
@@ -25,6 +37,12 @@ interface Props {
 export function ChatPanel({ state, mood, onClose, onTypingChange }: Props): React.JSX.Element {
     const [draft, setDraft] = useState("");
     const [deckOpen, setDeckOpen] = useState(false);
+    // Seeded from the saved choice so reopening Orbit lands where he left it,
+    // then owned locally: a click must switch the pane whether or not the
+    // write to settings.json comes back.
+    const [section, setSection] = useState<DeckSection>(() =>
+        isDeckSection(state.settings.deckSection) ? state.settings.deckSection : "board",
+    );
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const scrollRef = useAutoScroll(state.messages.length + (state.messages.at(-1)?.text.length ?? 0));
     const palette = MOODS[mood];
@@ -33,7 +51,38 @@ export function ChatPanel({ state, mood, onClose, onTypingChange }: Props): Reac
         inputRef.current?.focus();
     }, []);
 
-    useEffect(() => onScene((scene) => setDeckOpen(scene.includes("deck"))), []);
+    // The capture harness names a scene "chat-deck-board" and expects both the
+    // pane open and that section showing. Both live here now, so both are set
+    // from the one place.
+    useEffect(
+        () =>
+            onScene((scene) => {
+                setDeckOpen(scene.includes("deck"));
+                const alias = SCENE_ALIASES.find(([suffix]) => scene.endsWith(suffix));
+                if (alias) {
+                    setSection(alias[1]);
+                    return;
+                }
+                const match = DECK_SECTIONS.find((id) => scene.endsWith(id));
+                if (match) setSection(match);
+            }),
+        [],
+    );
+
+    /**
+     * The rail is permanent, so it has to be able to close what it opens:
+     * clicking the section already showing puts the transcript back. Anything
+     * else opens the pane at what was clicked.
+     */
+    const chooseSection = (id: DeckSection): void => {
+        if (deckOpen && id === section) {
+            setDeckOpen(false);
+            return;
+        }
+        setSection(id);
+        setDeckOpen(true);
+        if (id !== section) void window.orbit.setSettings({ deckSection: id });
+    };
 
     useEffect(() => {
         onTypingChange(draft.trim().length > 0);
@@ -58,7 +107,6 @@ export function ChatPanel({ state, mood, onClose, onTypingChange }: Props): Reac
         node.style.height = `${node.scrollHeight + borders}px`;
     }, [draft]);
 
-    const live = state.agents.filter(isLive);
     const ready = state.runtime === "ready";
 
     const submit = (override?: string): void => {
@@ -124,15 +172,6 @@ export function ChatPanel({ state, mood, onClose, onTypingChange }: Props): Reac
                     <Icon name={state.settings.yolo ? "bolt" : "shield"} />
                 </button>
                 <button
-                    className={`icon-button ${deckOpen ? "on" : ""}`}
-                    title="Mission control"
-                    aria-label="Mission control"
-                    onClick={() => setDeckOpen((open) => !open)}
-                >
-                    <Icon name="deck" />
-                    {live.length > 0 && <em className="count">{live.length}</em>}
-                </button>
-                <button
                     className="icon-button"
                     title="Restart Orbit to load new code, keeping this conversation"
                     aria-label="Restart Orbit to load new code, keeping this conversation"
@@ -150,7 +189,15 @@ export function ChatPanel({ state, mood, onClose, onTypingChange }: Props): Reac
                 </button>
             </header>
 
-            {deckOpen && <MissionControl state={state} />}
+            <NavRail
+                state={state}
+                section={section}
+                open={deckOpen}
+                orientation="bar"
+                onSelect={chooseSection}
+            />
+
+            {deckOpen && <MissionControl state={state} section={section} />}
 
             <div className="transcript" ref={scrollRef}>
                 {state.messages.map((message) => (
