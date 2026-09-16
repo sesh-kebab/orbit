@@ -43,6 +43,8 @@ export interface AgentRunnerHooks {
      */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     getAgentTools(): Tool<any>[];
+    /** The rules for what a deliverable looks like, appended to the brief. */
+    getDesignLanguage(): string;
     onUsage(input: number, output: number): void;
     onToolCall(): void;
     onFinished(agent: AgentView): void;
@@ -115,7 +117,7 @@ export class AgentRunner {
             this.armWatchdog(settings.agentTimeoutMinutes);
 
             const final = await session.sendAndWait(
-                { prompt: buildAgentPrompt(this.agent.task) },
+                { prompt: buildAgentPrompt(this.agent.task, this.hooks.getDesignLanguage()) },
                 AGENT_IDLE_TIMEOUT_MS,
             );
 

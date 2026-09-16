@@ -25,6 +25,7 @@ import type {
 } from "../../shared/types.js";
 import { agentColor, shortSpan } from "../mood.js";
 import { Icon, type IconName } from "./Icon.js";
+import { isViewable, openInReader } from "../reader.js";
 
 /** Calls shown before the list folds. More than this and none of them get read. */
 const CALLS_SHOWN = 3;
@@ -319,6 +320,12 @@ function ArtifactRow({
 
     const act = (reveal: boolean): void => {
         if (gone) return;
+        if (!reveal && !artifact.external && isViewable(target, info?.isDirectory)) {
+            openInReader(target);
+            setOpened(true);
+            void window.orbit.markArtifactOpened(artifact.id).catch(() => undefined);
+            return;
+        }
         const call = artifact.external
             ? window.orbit.openUrl(target)
             : reveal

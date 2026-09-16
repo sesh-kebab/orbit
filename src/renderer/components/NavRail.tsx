@@ -46,6 +46,12 @@ export const SECTIONS: SectionDef[] = [
         help: "What Orbit remembers about you, and anything waiting on you",
     },
     {
+        id: "read",
+        label: "read",
+        icon: "file",
+        help: "Whatever Orbit last made you, rendered here rather than in a browser",
+    },
+    {
         id: "log",
         label: "log",
         icon: "clock",
@@ -118,7 +124,9 @@ export function railState(state: OrbitState, id: DeckSection): RailState {
                 ? { attention: waiting, why: `${waiting} decision${waiting === 1 ? "" : "s"} waiting on you` }
                 : {};
         }
-        // The log is a record, never a demand, and appearance is never urgent.
+        // The log is a record, appearance is never urgent, and the viewer is
+        // a place rather than a queue: the board already counts what is unread.
+        case "read":
         case "log":
         case "look":
             return {};

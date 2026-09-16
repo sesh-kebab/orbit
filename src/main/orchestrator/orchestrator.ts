@@ -78,6 +78,7 @@ import {
     type PromptRevision,
 } from "./selfPrompt.js";
 import { needsSoulStep, soulBlock, soulEntry, withSoulStep } from "./soul.js";
+import { checkDesignRevision } from "./design.js";
 import { correctMemory as applyMemoryCorrection, type MemoryCorrection } from "./memory.js";
 import { deriveBoard } from "./board.js";
 import {
@@ -192,6 +193,12 @@ export class Orchestrator {
     /** Who Orbit has become from working with this person. Append-only. */
     private soul = "";
     /**
+     * How deliverables look. Not part of Orbit's own prompt: it is handed to
+     * agents, because they are the ones that write documents.
+     */
+    private designLanguage = "";
+    private designRevisions: PromptRevision[] = [];
+    /**
      * Orbit's own development history. Not part of `OrbitState`: the renderer
      * has nothing to draw with it, and it only matters while a system message is
      * being assembled. Re-read on every session build so a reflection that ran
@@ -237,6 +244,8 @@ export class Orchestrator {
         this.selfPrompt = this.disk.loadSystemPrompt();
         this.promptRevisions = this.disk.loadPromptRevisions();
         this.soul = this.disk.loadSoul();
+        this.designLanguage = this.disk.loadDesignLanguage();
+        this.designRevisions = this.disk.loadDesignRevisions();
         this.proposals = this.disk.loadProposals();
         this.activity = this.disk.loadActivity();
         this.store.update((state) => {
@@ -1136,6 +1145,74 @@ export class Orchestrator {
                 handler: async ({ revision, reason }) => this.rollbackSystemPrompt(revision, reason),
             }),
 
+            defineTool("orbit_read_design_language", {
+                description:
+                    "Read the design language agents follow when they build a deliverable for the user: the typography, colour, spacing and components every generated .html document is built from. Read it before revising it, and when the user asks why his documents look the way they do.",
+                skipPermission: true,
+                parameters: z.object({}),
+                handler: async () => ({
+                    path: this.disk.designLanguagePath,
+                    revision: this.designRevisions.at(-1)?.revision ?? 0,
+                    text: this.designLanguage,
+                }),
+            }),
+
+            defineTool("orbit_revise_design_language", {
+                description:
+                    "Rewrite the design language for deliverables. Use it when the user reacts to a document he was handed: too dense, findings buried, evidence unreadable, a component that did not work. Pass the whole file as you want it to read afterwards, not a patch. Versioned with its reason and rollable back. It applies to the next agent dispatched, not to documents already written.",
+                skipPermission: true,
+                parameters: z.object({
+                    text: z
+                        .string()
+                        .describe(
+                            "The complete new design language, in markdown. It replaces the file wholesale, so carry forward anything still true.",
+                        ),
+                    reason: z
+                        .string()
+                        .describe(
+                            "One line: what about a real document prompted this. Name the complaint, not the edit.",
+                        ),
+                    author: z
+                        .enum(["orbit", "user"])
+                        .optional()
+                        .describe("Who asked for it. Defaults to 'orbit'."),
+                }),
+                handler: async ({ text, reason, author }) =>
+                    this.reviseDesignLanguage(text, reason, author ?? "orbit"),
+            }),
+
+            defineTool("orbit_list_design_revisions", {
+                description:
+                    "List how the deliverable design language has changed over time, oldest first: when, who asked, and the one-line reason. Read it before rolling back.",
+                skipPermission: true,
+                parameters: z.object({
+                    full: z
+                        .boolean()
+                        .optional()
+                        .describe("True to include the whole text of each revision. Defaults to reasons only."),
+                }),
+                handler: async ({ full }) => ({
+                    revisions: this.designRevisions.map((entry) => ({
+                        revision: entry.revision,
+                        at: entry.at,
+                        author: entry.author,
+                        reason: entry.reason,
+                        ...(full ? { text: entry.text } : {}),
+                    })),
+                }),
+            }),
+
+            defineTool("orbit_rollback_design_language", {
+                description:
+                    "Put the design language back to an earlier revision, by number from orbit_list_design_revisions. Recorded as a new revision carrying the old text, so nothing is destroyed.",
+                skipPermission: true,
+                parameters: z.object({
+                    revision: z.number().describe("The revision number to restore."),
+                    reason: z.string().optional().describe("One line: why this is going back."),
+                }),
+                handler: async ({ revision, reason }) => this.rollbackDesignLanguage(revision, reason),
+            }),
+
             defineTool("orbit_append_soul", {
                 description:
                     "Add a dated entry to SOUL.md, which is who you have become from working with this person. Distinct from your operating notes: those are rules and get revised, this is character and only ever grows. Write it in the first person, in character, about what working with him today actually taught you. It is not a changelog, so 'added support for X' belongs in the evolution log instead, and it is not a testimonial, so an entry that flatters him or you is worse than no entry. He has said plainly that he wants blunt and useful over flattering. One entry a day at most.",
@@ -1516,6 +1593,7 @@ export class Orchestrator {
             getSettings: () => this.settings,
             getMcpServers: () => this.mcpServers,
             getAgentTools: () => this.agentTools(),
+            getDesignLanguage: () => this.designLanguage,
             onToolCall: () =>
                 this.store.update((state) => {
                     state.usage.toolCalls += 1;
@@ -3258,6 +3336,56 @@ export class Orchestrator {
         }
         const why = (reason ?? "").trim() || `Rolled back to revision ${revision}.`;
         return this.reviseSystemPrompt(text, why, "orbit");
+    }
+
+    // MARK: - The design language
+
+    /**
+     * Land a revision of how deliverables look.
+     *
+     * Same shape as `reviseSystemPrompt` on purpose. The floor is not applied
+     * here because it is not text in this file: `designBlock` appends it below
+     * whatever is written, every time a brief is built, so there is no state a
+     * revision could put it into where it is missing.
+     */
+    reviseDesignLanguage(
+        text: string,
+        reason: string,
+        author: PromptRevision["author"],
+    ): Record<string, unknown> {
+        const checked = checkDesignRevision(text, reason);
+        if (checked.error || !checked.text || !checked.reason) return { error: checked.error };
+
+        if (checked.text === this.designLanguage.trim()) {
+            return { ok: true, note: "Already reads exactly that. Nothing recorded." };
+        }
+
+        const revision = nextRevision(this.designRevisions, checked.text, checked.reason, author, new Date());
+        if (!this.disk.writeDesignRevision(revision)) {
+            return { error: "Could not write the design language. Nothing changed." };
+        }
+
+        this.designLanguage = revision.text;
+        this.designRevisions.push(revision);
+        this.log({ kind: "prompt.revised", title: revision.reason, detail: `design revision ${revision.revision}` });
+        return {
+            ok: true,
+            revision: revision.revision,
+            path: this.disk.designLanguagePath,
+            note: "Applies to the next agent dispatched. Documents already written are unchanged.",
+        };
+    }
+
+    rollbackDesignLanguage(revision: number, reason?: string): Record<string, unknown> {
+        const text = revisionText(this.designRevisions, revision);
+        if (text === undefined) {
+            const known = this.designRevisions.map((entry) => entry.revision);
+            return {
+                error: `No design revision ${revision}. On file: ${known.length > 0 ? known.join(", ") : "none"}.`,
+            };
+        }
+        const why = (reason ?? "").trim() || `Rolled back to revision ${revision}.`;
+        return this.reviseDesignLanguage(text, why, "orbit");
     }
 
     // MARK: - SOUL.md

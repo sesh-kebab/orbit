@@ -7,7 +7,8 @@ import type { Settings } from "../shared/types.js";
 import { CHAT_FONTS, CHAT_FONT_SIZES } from "../shared/types.js";
 import { Orchestrator } from "./orchestrator/orchestrator.js";
 import { Persistence } from "./persistence.js";
-import { inspectPaths, openExternalUrl, openPath, revealPath } from "./reveal.js";
+import { inspectPaths, openExternalUrl, openPath, resolveUserPath, revealPath } from "./reveal.js";
+import { readArtifact } from "./artifactDoc.js";
 import { migrateLegacyState } from "./migrate.js";
 import { clampToScreen, createPanel, defaultBounds, resizeFromTopLeft, resolveRendererUrl } from "./panel.js";
 import { assessFreshness, collectFreshnessFacts } from "./freshness.js";
@@ -288,6 +289,13 @@ function registerIpc(): void {
     ipcMain.handle("orbit:inspectPaths", (_event, paths: unknown) =>
         Array.isArray(paths) ? inspectPaths(paths.filter((p): p is string => typeof p === "string")) : [],
     );
+    ipcMain.handle("orbit:readArtifact", (_event, path: unknown) => {
+        const target = typeof path === "string" ? resolveUserPath(path) : undefined;
+        if (!target) {
+            return { ok: false, path: "", title: "", kind: "html", text: "", error: "That isn't an absolute path." };
+        }
+        return readArtifact(target);
+    });
     ipcMain.handle("orbit:openPath", (_event, path: unknown) =>
         typeof path === "string" ? openPath(path) : { ok: false, error: "No path given." },
     );

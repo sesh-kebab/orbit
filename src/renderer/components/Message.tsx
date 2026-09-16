@@ -4,6 +4,7 @@ import { agentColor, elapsedLabel } from "../mood.js";
 import { Icon } from "./Icon.js";
 import { parseMarkdown, isPlainText, type Block, type Inline } from "../markdown.js";
 import { pathCandidates, pathLabel, splitPathSegments, urlLabel } from "../paths.js";
+import { isViewable, openInReader } from "../reader.js";
 
 interface Props {
     state: OrbitState;
@@ -270,6 +271,12 @@ function PathChip({ label, info }: { label: string; info: PathInfo }): React.JSX
     const target = info.resolved ?? info.raw;
 
     const act = (reveal: boolean): void => {
+        // A deliverable opens in the panel, not in a browser or an editor. Alt
+        // still reveals, because "where is it" is a different question.
+        if (!reveal && isViewable(target, info.isDirectory)) {
+            openInReader(target);
+            return;
+        }
         const call = reveal ? window.orbit.revealPath(target) : window.orbit.openPath(target);
         void call
             .then((result) => setFailed(result.ok ? undefined : (result.error ?? "Could not open that.")))
@@ -293,6 +300,7 @@ function PathChip({ label, info }: { label: string; info: PathInfo }): React.JSX
 
 /** Say what the click will actually do, which is not always "open". */
 function openVerb(info: PathInfo): string {
+    if (isViewable(info.resolved ?? info.raw, info.isDirectory)) return "Read it here";
     if (info.revealOnly) return "Show in Finder";
     return info.isDirectory ? "Open in Finder" : "Open in your editor";
 }

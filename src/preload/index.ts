@@ -35,6 +35,7 @@ const api: OrbitApi = {
     openPersona: () => ipcRenderer.invoke("orbit:openPersona"),
     inspectPaths: (paths: string[]) => ipcRenderer.invoke("orbit:inspectPaths", paths),
     openPath: (path: string) => ipcRenderer.invoke("orbit:openPath", path),
+    readArtifact: (path: string) => ipcRenderer.invoke("orbit:readArtifact", path),
     revealPath: (path: string) => ipcRenderer.invoke("orbit:revealPath", path),
     openUrl: (url: string) => ipcRenderer.invoke("orbit:openUrl", url),
     dictationSupport: () => ipcRenderer.invoke("orbit:dictationSupport"),
