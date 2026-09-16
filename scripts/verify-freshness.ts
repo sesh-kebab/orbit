@@ -9,12 +9,16 @@
 import {
     FRESHNESS_TAG,
     GRACE_MS,
+    RESTART_IDLE_MS,
+    RESTART_SETTLE_MS,
     assessFreshness,
     collectFreshnessFacts,
+    decideAutoRestart,
     decideFreshnessAction,
     describeGap,
     freshnessSource,
     stateOfFreshnessSource,
+    type AutoRestartFacts,
     type FreshnessFacts,
 } from "../src/main/freshness.js";
 
@@ -268,6 +272,133 @@ check(
     "and therefore no opinion",
     assessFreshness(missing, Date.now()).state,
     "unknown",
+);
+
+// --- Applying a waiting build automatically ---------------------------------
+
+// The conditions are a conjunction, so each case below flips exactly one thing
+// away from a known-good baseline. That baseline is the situation this feature
+// exists for: an overnight build, an idle machine, nobody around.
+function autoFacts(patch: Partial<AutoRestartFacts>): AutoRestartFacts {
+    return {
+        state: "needs-restart",
+        builtAt: NOW - 30 * MINUTE,
+        busy: false,
+        agentsActive: false,
+        awaitingUser: false,
+        lastInteractionAt: NOW - 3 * HOUR,
+        alreadyTriedBuildAt: undefined,
+        ...patch,
+    };
+}
+
+const applies = decideAutoRestart(autoFacts({}), NOW);
+check("an unrun build on an idle machine is applied", applies.restart, true);
+check(
+    "and the decision names the build it is applying",
+    applies.restart ? applies.builtAt : undefined,
+    NOW - 30 * MINUTE,
+);
+
+check(
+    "a current process is left alone",
+    decideAutoRestart(autoFacts({ state: "current" }), NOW).restart,
+    false,
+);
+check(
+    "a stale build is rebuilt by someone else, not restarted into",
+    decideAutoRestart(autoFacts({ state: "needs-build" }), NOW).restart,
+    false,
+);
+check(
+    "an unknown state is not acted on",
+    decideAutoRestart(autoFacts({ state: "unknown" }), NOW).restart,
+    false,
+);
+check(
+    "no build means nothing to apply",
+    decideAutoRestart(autoFacts({ builtAt: undefined }), NOW).restart,
+    false,
+);
+
+// The loop-breaker. Without this, a restart that fails to fix the staleness
+// bounces the app every five minutes, forever.
+check(
+    "a build already restarted for is never restarted for again",
+    decideAutoRestart(autoFacts({ alreadyTriedBuildAt: NOW - 30 * MINUTE }), NOW).restart,
+    false,
+);
+check(
+    "nor is an older build than the one already tried",
+    decideAutoRestart(
+        autoFacts({ builtAt: NOW - 90 * MINUTE, alreadyTriedBuildAt: NOW - 30 * MINUTE }),
+        NOW,
+    ).restart,
+    false,
+);
+check(
+    "but the next night's build is",
+    decideAutoRestart(
+        autoFacts({ builtAt: NOW - 10 * MINUTE, alreadyTriedBuildAt: NOW - 26 * HOUR }),
+        NOW,
+    ).restart,
+    true,
+);
+
+check(
+    "a build still being written is left to finish",
+    decideAutoRestart(autoFacts({ builtAt: NOW - 30_000 }), NOW).restart,
+    false,
+);
+check(
+    "once settled, it is applied",
+    decideAutoRestart(autoFacts({ builtAt: NOW - RESTART_SETTLE_MS - 1000 }), NOW).restart,
+    true,
+);
+
+// Never yank the app out from under someone who is using it.
+check(
+    "not while Orbit is mid-turn",
+    decideAutoRestart(autoFacts({ busy: true }), NOW).restart,
+    false,
+);
+check(
+    "not while an agent is working",
+    decideAutoRestart(autoFacts({ agentsActive: true }), NOW).restart,
+    false,
+);
+check(
+    "not while something waits on the user",
+    decideAutoRestart(autoFacts({ awaitingUser: true }), NOW).restart,
+    false,
+);
+check(
+    "not in the middle of a conversation",
+    decideAutoRestart(autoFacts({ lastInteractionAt: NOW - MINUTE }), NOW).restart,
+    false,
+);
+check(
+    "once the conversation has gone quiet, yes",
+    decideAutoRestart(autoFacts({ lastInteractionAt: NOW - RESTART_IDLE_MS - 1000 }), NOW).restart,
+    true,
+);
+
+ok(
+    "every refusal explains itself",
+    [
+        decideAutoRestart(autoFacts({ state: "current" }), NOW),
+        decideAutoRestart(autoFacts({ busy: true }), NOW),
+        decideAutoRestart(autoFacts({ agentsActive: true }), NOW),
+        decideAutoRestart(autoFacts({ lastInteractionAt: NOW }), NOW),
+    ].every((decision) => !decision.restart && decision.because.length > 0),
+);
+
+// The verdict has to carry the build it was reached about, or the "already
+// tried this one" guard has nothing to compare.
+check(
+    "a needs-restart verdict names its build",
+    assessFreshness(facts({ builtAt: NOW - 5 * MINUTE, processStartedAt: NOW - 3 * HOUR }), NOW).builtAt,
+    NOW - 5 * MINUTE,
 );
 
 // --- Report -----------------------------------------------------------------

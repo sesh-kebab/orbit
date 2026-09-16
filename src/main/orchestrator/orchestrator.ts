@@ -120,7 +120,7 @@ import {
     parseRunDays,
     suppressionAt,
 } from "./suppression.js";
-import { FRESHNESS_TAG, decideFreshnessAction } from "../freshness.js";
+import { FRESHNESS_TAG, decideAutoRestart, decideFreshnessAction } from "../freshness.js";
 import type { Freshness } from "../freshness.js";
 
 /** Distinguishes 'not installed' from a runtime that started and then failed. */
@@ -3099,6 +3099,47 @@ export class Orchestrator {
             return;
         }
         this.reconcileFreshness();
+        this.maybeAutoRestart();
+    }
+
+    /**
+     * Apply a waiting build instead of asking someone to.
+     *
+     * Everything needed for this already existed and was never joined up: Orbit
+     * could tell it was stale, and it could restart itself safely while keeping
+     * the conversation. All that sat between them was a note asking a human,
+     * which went unactioned five nights running while ten merged commits and two
+     * builds never executed. The decision is in `decideAutoRestart` so the
+     * safety conditions can be checked without a process to kill.
+     */
+    private maybeAutoRestart(): void {
+        if (!this.onSoftRestart || this.restarting) return;
+
+        const state = this.store.get();
+        const decision = decideAutoRestart(
+            {
+                state: this.freshness?.state ?? "unknown",
+                builtAt: this.freshness?.builtAt,
+                busy: state.orbitBusy,
+                agentsActive: state.agents.some(
+                    (agent) =>
+                        agent.status === "queued" ||
+                        agent.status === "running" ||
+                        agent.status === "needs-input",
+                ),
+                awaitingUser: state.requests.length > 0,
+                lastInteractionAt: state.lastInteractionAt,
+                alreadyTriedBuildAt: this.disk.loadAutoRestartMark(),
+            },
+            Date.now(),
+        );
+        if (!decision.restart) return;
+
+        // Marked before the relaunch, never after: a process that does not come
+        // back must still count as having tried.
+        this.disk.saveAutoRestartMark(decision.builtAt);
+        console.log(`[orbit] auto-restart: ${decision.because}`);
+        this.softRestart();
     }
 
     // MARK: - Activity ledger
