@@ -83,6 +83,38 @@ const EVOLUTION_LOG_READ_CAP = 200_000;
 const SYSTEM_PROMPT_PATH = join(ORBIT_HOME_DIR, "system-prompt.md");
 const PROMPT_REVISIONS_PATH = join(ORBIT_HOME_DIR, "system-prompt-revisions.jsonl");
 
+/**
+ * Who Orbit has become from working with this particular person. Append-only,
+ * beside the evolution log for the same reason: the nightly reflection writes
+ * it, and a scheduled job should not have to know where Electron keeps its
+ * application support directory.
+ */
+const SOUL_PATH = join(ORBIT_HOME_DIR, "SOUL.md");
+
+/** Never read more of it than the prompt block could possibly quote. */
+const SOUL_READ_CAP = 60_000;
+
+/**
+ * What a fresh install starts with. Deliberately not a first entry: on a
+ * machine Orbit has never run on there is nothing true to say yet, and a seeded
+ * entry pretending otherwise is exactly the tone this file is supposed to
+ * avoid.
+ */
+const DEFAULT_SOUL = `# SOUL.md
+
+Who Orbit is becoming, from working with you specifically.
+
+This is not the system prompt and not a changelog. The prompt is operating
+instructions and gets revised when it is wrong; this is character, it is
+append-only, and it grows one dated entry at a time. The nightly self-reflection
+writes here about what it learned about working with you that day, in the first
+person, in character. It is not supposed to be flattering, about you or itself.
+
+Edit it by hand whenever you like. Orbit reads whatever is here.
+
+No entries yet. The first one arrives after a day worth writing about.
+`;
+
 /** One tool or agent Orbit reached for during a turn, and how it went. */
 export interface LoggedToolCall {
     name: string;
@@ -514,6 +546,47 @@ export class Persistence {
             console.error("[orbit] could not record the prompt revision:", error);
         }
         return true;
+    }
+
+    // MARK: - SOUL.md
+
+    get soulPath(): string {
+        return SOUL_PATH;
+    }
+
+    /**
+     * Seeded once with an explanation rather than a first entry: a fresh
+     * install has learned nothing about anybody yet, and inventing a character
+     * note on day zero is the failure this file is meant to avoid.
+     */
+    loadSoul(): string {
+        if (!existsSync(SOUL_PATH)) {
+            try {
+                mkdirSync(ORBIT_HOME_DIR, { recursive: true });
+                writeFileSync(SOUL_PATH, DEFAULT_SOUL, "utf8");
+            } catch (error) {
+                console.warn("[orbit] could not seed SOUL.md:", error);
+                return "";
+            }
+        }
+        try {
+            const text = readFileSync(SOUL_PATH, "utf8");
+            return text.length > SOUL_READ_CAP ? text.slice(-SOUL_READ_CAP) : text;
+        } catch {
+            return "";
+        }
+    }
+
+    /** Append-only, always. Nothing in this file is ever rewritten in place. */
+    appendSoul(addition: string): boolean {
+        try {
+            mkdirSync(ORBIT_HOME_DIR, { recursive: true });
+            appendFileSync(SOUL_PATH, addition, "utf8");
+            return true;
+        } catch (error) {
+            console.error("[orbit] could not append to SOUL.md:", error);
+            return false;
+        }
     }
 }
 

@@ -24,6 +24,14 @@ import {
     selfPromptBlock,
     type PromptRevision,
 } from "../src/main/orchestrator/selfPrompt.js";
+import {
+    SOUL_ENTRY_CAP,
+    SOUL_REFLECTION_STEP,
+    needsSoulStep,
+    soulBlock,
+    soulEntry,
+    withSoulStep,
+} from "../src/main/orchestrator/soul.js";
 
 let passed = 0;
 const failures: string[] = [];
@@ -147,12 +155,69 @@ const clock = new Date(Date.UTC(2026, 8, 15, 21, 30));
 {
     check("agents may read the prompt", AGENT_TOOL_NAMES.includes("orbit_read_system_prompt"));
     check("and its history", AGENT_TOOL_NAMES.includes("orbit_list_prompt_revisions"));
+    check("agents may append to SOUL.md", AGENT_TOOL_NAMES.includes("orbit_append_soul"));
     check("agents may not revise it", FORBIDDEN_AGENT_TOOL_NAMES.includes("orbit_revise_system_prompt"));
     check("nor roll it back", FORBIDDEN_AGENT_TOOL_NAMES.includes("orbit_rollback_system_prompt"));
     check(
         "and the two lists never overlap",
         AGENT_TOOL_NAMES.every((name) => !FORBIDDEN_AGENT_TOOL_NAMES.includes(name)),
     );
+}
+
+// MARK: - SOUL.md
+
+{
+    const entry = soulEntry("He corrected me twice today and both times I was the one being tidy.", clock);
+    check("an entry is accepted", entry.error === undefined, entry.error);
+    check("it is dated", (entry.addition ?? "").includes("## 15 September 2026"));
+    check("the text survives", (entry.addition ?? "").includes("both times I was the one being tidy"));
+
+    // A model told to append markdown brings its own heading about half the
+    // time, and two headings for one entry reads as two entries.
+    const headed = soulEntry("## 15 September 2026\n\nSomething happened.", clock);
+    check("a heading the model brought is not doubled", (headed.addition ?? "").split("## ").length === 2);
+
+    check("an empty entry is refused", soulEntry("  ", clock).error !== undefined);
+    check("and an oversized one", soulEntry("x".repeat(SOUL_ENTRY_CAP + 1), clock).error !== undefined);
+
+    // Append-only is the whole distinction from the operating notes, so an
+    // entry is always additive text and never a replacement document.
+    check("an entry is an addition, not a file", (entry.addition ?? "").startsWith("\n## "));
+
+    const block = soulBlock("## 1 January\n\nSomething.")!;
+    check("the block is tagged", block.includes("<soul>"));
+    check("it says this is character, not instruction", block.toLowerCase().includes("not instructions"));
+    check("an empty soul says nothing", soulBlock("") === undefined);
+    check("and a missing one says nothing", soulBlock(undefined) === undefined);
+
+    // Oldest entries drop out of context first: the file is about who Orbit is
+    // now, so a full file must not push today's entry out.
+    const huge = `${"old. ".repeat(4000)}\n\n## today\n\nThe newest thing.`;
+    const trimmed = soulBlock(huge)!;
+    check("a long soul keeps the newest entry", trimmed.includes("The newest thing."));
+    check("and marks that it was cut", trimmed.includes("..."));
+}
+
+// MARK: - Teaching the nightly reflection to write it
+
+{
+    const brief = "STEPS:\n1. Read the log.\n\nIf any orbit_ tool is unavailable, say so.\n\nTONE: direct.";
+    check("a brief that never mentions it needs the step", needsSoulStep(brief));
+
+    const taught = withSoulStep(brief);
+    check("the step lands in the brief", taught.includes("orbit_append_soul"));
+    check("the caveat stays the last word", taught.indexOf("If any orbit_") > taught.indexOf("orbit_append_soul"));
+    check("the original steps survive", taught.includes("1. Read the log."));
+    check("teaching it twice is a no-op", !needsSoulStep(taught));
+
+    // A brief with no caveat still gets the step, at the end.
+    const bare = withSoulStep("Do the thing.");
+    check("a brief with no caveat still gets it", bare.includes("orbit_append_soul"));
+
+    // The step has to say what the file is not, because the failure mode is a
+    // changelog or a testimonial rather than a missing entry.
+    check("the step rules out a changelog", SOUL_REFLECTION_STEP.includes("evolution log"));
+    check("and rules out flattery", SOUL_REFLECTION_STEP.includes("flattering"));
 }
 
 // MARK: - Report

@@ -53,6 +53,12 @@ export const AGENT_TOOL_NAMES: readonly string[] = [
     // the system that has never spoken to him.
     "orbit_read_system_prompt",
     "orbit_list_prompt_revisions",
+    // SOUL.md. The nightly self-reflection is the process this is for: it is
+    // the only one that ever looks back over a whole day, and an entry written
+    // by anything else would be written without having seen one. Appending is
+    // safe in a way revising is not, because nothing already in the file can be
+    // changed by it.
+    "orbit_append_soul",
 ];
 
 /**

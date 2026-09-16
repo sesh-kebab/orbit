@@ -246,6 +246,23 @@ history; revising and rolling back stay with Orbit, because a background job tha
 rewrite the operating notes of the process that spawned it is a loop with nobody in it.
 Run `npm run verify:prompt` for the negative cases.
 
+### SOUL.md
+
+`~/.copilot/orbit/SOUL.md` is the third file in the set, and it is deliberately not like the
+other two. `persona.md` is how you want Orbit to behave and only you write it.
+`system-prompt.md` is operating instructions and gets revised when a rule in it turns out to
+be wrong. `SOUL.md` is identity: who Orbit has become from working with you rather than
+somebody else, and it is append-only, so nothing already in it is ever rewritten.
+
+The nightly self-reflection adds one dated entry, in the first person, about what the day
+taught it about working with you. Not a summary of the day and not a list of what shipped:
+the evolution log already has both. Entries that flatter you or Orbit are worse than no
+entry, which the tool description and the reflection's brief both say outright.
+
+It is loaded into every session alongside the persona. When it outgrows its context budget
+the oldest entries drop out first, because the point of the file is who Orbit is now. Edit
+it by hand whenever you want; Orbit reads whatever is there.
+
 ### Saving the day's work
 
 Agents write files into Copilot's session scratch space, which is per-machine and vanishes
@@ -495,6 +512,8 @@ src/
       agentRunner.ts         one delegated task = one Copilot session
       permissions.ts         auto-approve policy and human-readable prompts
       persona.ts             orchestrator persona and agent brief
+      selfPrompt.ts          the notes Orbit revises, and the floor it cannot
+      soul.ts                SOUL.md entries and the character block
       evolution.ts           evolution log digest and proposal state for the prompt
       schedules.ts           cadences and the daily briefing template
       meetings.ts            meeting shape, prep briefs, calendar plan parsing

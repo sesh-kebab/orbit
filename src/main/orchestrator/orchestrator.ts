@@ -77,6 +77,7 @@ import {
     selfPromptBlock,
     type PromptRevision,
 } from "./selfPrompt.js";
+import { needsSoulStep, soulBlock, soulEntry, withSoulStep } from "./soul.js";
 import { correctMemory as applyMemoryCorrection, type MemoryCorrection } from "./memory.js";
 import { deriveBoard } from "./board.js";
 import {
@@ -188,6 +189,8 @@ export class Orchestrator {
      */
     private selfPrompt = "";
     private promptRevisions: PromptRevision[] = [];
+    /** Who Orbit has become from working with this person. Append-only. */
+    private soul = "";
     /**
      * Orbit's own development history. Not part of `OrbitState`: the renderer
      * has nothing to draw with it, and it only matters while a system message is
@@ -233,6 +236,7 @@ export class Orchestrator {
         this.persona = this.disk.loadPersona();
         this.selfPrompt = this.disk.loadSystemPrompt();
         this.promptRevisions = this.disk.loadPromptRevisions();
+        this.soul = this.disk.loadSoul();
         this.proposals = this.disk.loadProposals();
         this.activity = this.disk.loadActivity();
         this.store.update((state) => {
@@ -244,6 +248,7 @@ export class Orchestrator {
             state.personaPath = this.disk.personaPath;
         });
         this.migrateSuppression();
+        this.teachReflectionAboutSoul();
         this.reconcileFreshness();
 
         // Must happen before the session is created: the restored transcript is
@@ -409,6 +414,11 @@ export class Orchestrator {
         // assembled together on purpose: see `selfPrompt.ts`.
         const self = selfPromptBlock(this.selfPrompt);
         if (self) parts.push(self);
+
+        // Character, next to the personality it grew out of. Read fresh every
+        // session so a reflection that wrote an hour ago is already in context.
+        const soul = soulBlock(this.soul);
+        if (soul) parts.push(soul);
 
         const restored = this.restoredContext();
         if (restored) parts.push(restored);
@@ -1124,6 +1134,20 @@ export class Orchestrator {
                         .describe("Why, in a few words. Defaults to naming the revision being restored."),
                 }),
                 handler: async ({ revision, reason }) => this.rollbackSystemPrompt(revision, reason),
+            }),
+
+            defineTool("orbit_append_soul", {
+                description:
+                    "Add a dated entry to SOUL.md, which is who you have become from working with this person. Distinct from your operating notes: those are rules and get revised, this is character and only ever grows. Write it in the first person, in character, about what working with him today actually taught you. It is not a changelog, so 'added support for X' belongs in the evolution log instead, and it is not a testimonial, so an entry that flatters him or you is worse than no entry. He has said plainly that he wants blunt and useful over flattering. One entry a day at most.",
+                skipPermission: true,
+                parameters: z.object({
+                    text: z
+                        .string()
+                        .describe(
+                            "The entry, in markdown, without a heading: the date is added for you. Prose, in your own voice, grounded in something that actually happened.",
+                        ),
+                }),
+                handler: async ({ text }) => this.appendSoul(text),
             }),
 
             defineTool("orbit_record_proposal", {
@@ -2297,6 +2321,47 @@ export class Orchestrator {
      * dates found in the prose are lifted out too, so deleting the paragraph
      * later does not quietly delete the dates with it.
      */
+    /**
+     * Tell the nightly self-reflection about SOUL.md, once.
+     *
+     * The character file is useless if nothing ever writes to it, and the
+     * reflection is the only process that looks back over a whole day. Its
+     * brief is a user-authored schedule rather than a template in this file,
+     * so the instruction has to be added to the record on disk. That is done
+     * here, by the process that owns schedules.json, because an agent cannot:
+     * orbit_update_schedule is on FORBIDDEN_AGENT_TOOL_NAMES, and a hand-edit
+     * underneath a running app is overwritten on its next tick.
+     *
+     * Guarded twice. It only touches a live schedule whose title says it is a
+     * reflection, and only one whose brief does not already mention the file,
+     * so a brief he has since rewritten in his own words is left alone.
+     */
+    private teachReflectionAboutSoul(): void {
+        const targets = this.store
+            .get()
+            .schedules.filter(
+                (schedule) =>
+                    !schedule.archived &&
+                    /self[- ]?reflection/i.test(schedule.title) &&
+                    needsSoulStep(schedule.task),
+            )
+            .map((schedule) => schedule.id);
+        if (targets.length === 0) return;
+
+        this.store.update((state) => {
+            for (const schedule of state.schedules) {
+                if (targets.includes(schedule.id)) schedule.task = withSoulStep(schedule.task);
+            }
+        });
+        this.persistSchedules();
+        for (const id of targets) {
+            const schedule = this.store.get().schedules.find((entry) => entry.id === id);
+            if (schedule) {
+                this.log({ kind: "schedule.updated", title: schedule.title, detail: "taught to write SOUL.md" });
+            }
+        }
+    }
+
     private migrateSuppression(): void {
         const derivedFor = new Map<string, ReturnType<typeof deriveSuppression>>();
         for (const schedule of this.store.get().schedules) {
@@ -3193,6 +3258,24 @@ export class Orchestrator {
         }
         const why = (reason ?? "").trim() || `Rolled back to revision ${revision}.`;
         return this.reviseSystemPrompt(text, why, "orbit");
+    }
+
+    // MARK: - SOUL.md
+
+    /**
+     * Add to Orbit's character file. Append-only by construction: there is no
+     * path here that rewrites what is already in it, which is the whole
+     * difference between this and `reviseSystemPrompt`.
+     */
+    appendSoul(text: string): Record<string, unknown> {
+        const entry = soulEntry(text, new Date());
+        if (entry.error || !entry.addition) return { error: entry.error };
+        if (!this.disk.appendSoul(entry.addition)) {
+            return { error: "Could not write SOUL.md. Nothing was added." };
+        }
+        this.soul = `${this.soul}${entry.addition}`;
+        this.log({ kind: "soul.appended", title: "SOUL.md", detail: `${entry.addition.trim().length} characters` });
+        return { ok: true, path: this.disk.soulPath };
     }
 
     // MARK: - Evolution
