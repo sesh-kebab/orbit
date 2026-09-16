@@ -76,6 +76,12 @@ export interface Freshness {
     /** One line, written for a human. Undefined when there is nothing to say. */
     summary?: string;
     newestSourcePath?: string;
+    /**
+     * The build this verdict was reached about, carried through so the restart
+     * decision can identify *which* build it is applying. Without it, "have I
+     * already tried this one?" is unanswerable and a failed restart loops.
+     */
+    builtAt?: number;
 }
 
 /**
@@ -97,6 +103,7 @@ export function assessFreshness(facts: FreshnessFacts, now: number): Freshness {
         return {
             state: "needs-build",
             behindMs: sourceAhead,
+            builtAt: facts.builtAt,
             newestSourcePath: facts.newestSourcePath,
             summary: `The running build is ${describeGap(sourceAhead)} older than the source${
                 facts.newestSourcePath ? ` (newest change: ${facts.newestSourcePath})` : ""
@@ -109,13 +116,14 @@ export function assessFreshness(facts: FreshnessFacts, now: number): Freshness {
         return {
             state: "needs-restart",
             behindMs: buildAhead,
+            builtAt: facts.builtAt,
             summary: `A build finished ${describeGap(
                 now - facts.builtAt,
             )} ago, after this process started. Restart to actually run it.`,
         };
     }
 
-    return { state: "current", behindMs: 0 };
+    return { state: "current", behindMs: 0, builtAt: facts.builtAt };
 }
 
 /**
@@ -181,6 +189,92 @@ export function decideFreshnessAction(
         text,
         source,
         reason: `No longer ${was}: now ${freshness.state}.`,
+    };
+}
+
+/**
+ * Should Orbit apply a waiting build by restarting itself, right now?
+ *
+ * Raising a note and waiting for a human was tried, and it does not work. By 15
+ * September the running process was four days and ten commits behind main, with
+ * three separate open items blocked behind the same unperformed restart, and
+ * five consecutive nights of merged work had never executed. The nightly job
+ * builds, tests and merges; it is the last inch, replacing the process, that
+ * keeps failing, and that inch does not need a person.
+ *
+ * Note the loop this closes: the periodic freshness re-check was itself built
+ * to surface this problem, merged on 14 September, and could not report on it
+ * because it was part of the very code that was not running.
+ *
+ * The bar for acting is deliberately high. A companion that vanishes mid
+ * sentence is worse than one that is a day stale, so every condition below has
+ * to hold, and when any of them does not the answer is simply "not yet": the
+ * check runs again a few minutes later and the build is still there.
+ */
+export const RESTART_SETTLE_MS = 3 * 60_000;
+export const RESTART_IDLE_MS = 10 * 60_000;
+
+export interface AutoRestartFacts {
+    /** The current verdict. Only `needs-restart` is actionable. */
+    state: FreshnessState;
+    /** Which build would be applied. */
+    builtAt?: number;
+    /** Orbit is mid-turn: thinking, streaming or running a tool. */
+    busy: boolean;
+    /** At least one agent is queued, running or waiting on input. */
+    agentsActive: boolean;
+    /** Something on screen is waiting for the user to answer it. */
+    awaitingUser: boolean;
+    /** When the user last said anything. */
+    lastInteractionAt: number;
+    /**
+     * The build an automatic restart was last attempted for. The single most
+     * important input here: it is what makes this fire once per build instead
+     * of turning a restart that does not fix anything into a restart loop.
+     */
+    alreadyTriedBuildAt?: number;
+}
+
+export type AutoRestartDecision =
+    | { restart: false; because: string }
+    | { restart: true; builtAt: number; because: string };
+
+export function decideAutoRestart(facts: AutoRestartFacts, now: number): AutoRestartDecision {
+    // A rebuild is a separate job with a separate failure mode, and restarting
+    // onto a build that is itself behind the source achieves nothing.
+    if (facts.state !== "needs-restart") {
+        return { restart: false, because: `nothing waiting to be applied (${facts.state})` };
+    }
+    if (facts.builtAt === undefined) {
+        return { restart: false, because: "no build to restart into" };
+    }
+
+    // Once per build, forever. If the restart happened and the process came back
+    // still stale, something is wrong that another restart will not fix, and
+    // quietly bouncing the app every few minutes would be far worse than a
+    // stale build. `>=` rather than `===` so a clock that moved backwards, or a
+    // rebuilt marker with an older mtime, cannot re-arm it either.
+    if (facts.alreadyTriedBuildAt !== undefined && facts.alreadyTriedBuildAt >= facts.builtAt) {
+        return { restart: false, because: "already restarted for this build" };
+    }
+
+    // A build directory is written file by file. Restarting into one that is
+    // still being produced would load a half-written app.
+    if (now - facts.builtAt < RESTART_SETTLE_MS) {
+        return { restart: false, because: "the build is still settling" };
+    }
+
+    if (facts.busy) return { restart: false, because: "Orbit is mid-turn" };
+    if (facts.agentsActive) return { restart: false, because: "an agent is still working" };
+    if (facts.awaitingUser) return { restart: false, because: "a request is waiting on the user" };
+    if (now - facts.lastInteractionAt < RESTART_IDLE_MS) {
+        return { restart: false, because: "the user is mid-conversation" };
+    }
+
+    return {
+        restart: true,
+        builtAt: facts.builtAt,
+        because: `a build from ${describeGap(now - facts.builtAt)} ago has never run, and nothing is in flight`,
     };
 }
 

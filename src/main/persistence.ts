@@ -361,6 +361,26 @@ export class Persistence {
         this.writeJson("workspace-sync.json", { lastSyncedDay: day, at: Date.now() });
     }
 
+    // MARK: - Automatic restart
+
+    /**
+     * The build an automatic restart was last attempted for.
+     *
+     * Kept on disk rather than in memory for the obvious reason: the thing it
+     * guards against is a restart, which destroys memory. Written *before* the
+     * relaunch, so a process that never comes back still counts as an attempt
+     * and does not get retried on the next launch.
+     */
+    loadAutoRestartMark(): number | undefined {
+        const saved = this.readJson<{ builtAt?: unknown } | undefined>("auto-restart.json", undefined);
+        const builtAt = saved?.builtAt;
+        return typeof builtAt === "number" && Number.isFinite(builtAt) ? builtAt : undefined;
+    }
+
+    saveAutoRestartMark(builtAt: number): void {
+        this.writeJson("auto-restart.json", { builtAt, at: Date.now() });
+    }
+
     // MARK: - Window bounds
 
     /**
