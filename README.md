@@ -31,7 +31,7 @@ session with full tool access, and tells you where they got to.
 <table>
 <tr>
 <td width="42%" valign="top">
-  <img src="assets/mission-control.png" alt="Mission control: a left-hand nav rail with board, work, memory, log and look, and the board open beside it showing what is waiting on you, what is waiting on others, and what is running" width="100%">
+  <img src="assets/mission-control.png" alt="Mission control: a nav rail with board, work, memory, log and look, and the board open showing what is waiting on you, what is waiting on others, and what is running" width="100%">
 </td>
 <td valign="top">
 
@@ -435,10 +435,18 @@ chip goes through the exact same path as typing.
 <details>
 <summary><b>Observability and layout</b></summary>
 
-Mission control (the ▤ button) has **Agents** (every run, its brief, working directory,
-full step feed, tokens and final report), **Watchers**, **Memory**, **Log** (an append-only
-timeline, also on disk as `history.jsonl`) and **Look**. The footer carries lifetime run,
-step and token counts.
+The nav rail sits under the chat panel header and never goes away: **Board**, **Work**
+(every run, its brief, working directory, full step feed, tokens and final report, plus the
+watchers), **Memory**, **Log** (an append-only timeline, also on disk as `history.jsonl`)
+and **Look**. Clicking a section opens mission control below the rail; clicking the section
+already showing closes it again. It is a horizontal strip rather than the vertical rail it
+grew out of, because the panel is 440px wide at its floor and a permanent 58px column would
+spend a seventh of the chat's reading width on navigation.
+
+Because the rail is always drawn, its badges are too: a red count means something will not
+move until you do, and it is visible while you are reading the transcript rather than only
+once you open the thing that would have told you. The footer carries lifetime run, step and
+token counts.
 
 ```
 src/
@@ -469,9 +477,10 @@ src/
     markdown.ts              markdown → blocks and inline spans
     paths.ts                 finding file paths in message text
     components/Buddy.tsx     the character
-    components/ChatPanel.tsx chat, composer, header, dictation
+    components/ChatPanel.tsx chat, composer, header, dictation, the permanent rail
     components/Message.tsx   bubbles, path chips, spawn/request/completion cards
-    components/MissionControl.tsx  agents / watchers / memory / log / look
+    components/NavRail.tsx   the five sections, and what each badges before it is opened
+    components/MissionControl.tsx  board / work / memory / log / look
 tools/capture/               dev-only harness that renders the images in this README
 ```
 
