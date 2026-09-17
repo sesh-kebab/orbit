@@ -8,7 +8,7 @@ const api: OrbitApi = {
         ipcRenderer.on("orbit:state", listener);
         return () => ipcRenderer.off("orbit:state", listener);
     },
-    send: (prompt: string) => ipcRenderer.invoke("orbit:send", prompt),
+    send: (prompt: string, replyToId?: string) => ipcRenderer.invoke("orbit:send", prompt, replyToId),
     abort: () => ipcRenderer.invoke("orbit:abort"),
     answerRequest: (requestId, optionId, freeform) =>
         ipcRenderer.invoke("orbit:answerRequest", requestId, optionId, freeform),

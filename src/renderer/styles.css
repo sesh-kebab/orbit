@@ -348,6 +348,69 @@ body,
     color: #fff;
 }
 
+/* The message a quote points at, flashed after a click on the quote. Outline
+   rather than background: the bubble's own fill has to stay readable. */
+.bubble-found {
+    animation: bubble-found 1.6s ease-out;
+}
+@keyframes bubble-found {
+    0%,
+    60% {
+        box-shadow: 0 0 0 2px rgba(160, 175, 255, 0.85);
+    }
+    100% {
+        box-shadow: 0 0 0 2px rgba(160, 175, 255, 0);
+    }
+}
+
+/* The quoted question above a quick reply, iOS/WhatsApp style: a thin accent
+   bar and two lines of muted text. Sits hard against the bubble below it so the
+   two read as one unit rather than as two messages. */
+.reply-quote {
+    align-self: flex-end;
+    display: flex;
+    gap: 7px;
+    max-width: min(86%, 560px);
+    margin: 2px 0 -6px;
+    padding: 5px 9px;
+    border: 0;
+    border-radius: 11px 11px 4px 11px;
+    background: rgba(255, 255, 255, 0.07);
+    color: var(--muted);
+    font: inherit;
+    font-size: calc(var(--chat-font-scale) * 11px);
+    line-height: 1.35;
+    text-align: left;
+    cursor: pointer;
+    transition: background 120ms ease;
+}
+.reply-quote:hover {
+    background: rgba(255, 255, 255, 0.12);
+}
+.reply-quote:focus-visible {
+    outline: 2px solid rgba(160, 175, 255, 0.9);
+    outline-offset: 2px;
+}
+.reply-quote-bar {
+    flex: none;
+    width: 2px;
+    border-radius: 2px;
+    background: rgba(160, 175, 255, 0.85);
+}
+.reply-quote-text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+.reply-quote-label {
+    display: block;
+    color: rgba(160, 175, 255, 0.9);
+    font-size: calc(var(--chat-font-scale) * 10px);
+    letter-spacing: 0.02em;
+}
+
 .caret {
     display: inline-block;
     width: 6px;

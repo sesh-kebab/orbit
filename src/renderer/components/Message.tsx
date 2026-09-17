@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { AgentView, ChatMessage, OrbitState, PathInfo, PendingRequest } from "../../shared/types.js";
+import type { AgentView, ChatMessage, OrbitState, PathInfo, PendingRequest, ReplyRef } from "../../shared/types.js";
 import { agentColor, elapsedLabel } from "../mood.js";
 import { Icon } from "./Icon.js";
 import { parseMarkdown, isPlainText, type Align, type Block, type Inline } from "../markdown.js";
@@ -30,8 +30,13 @@ export function Message({ state, message }: Props): React.JSX.Element | null {
             if (!message.text.trim() && !message.choices?.length) return null;
             return (
                 <>
+                    {message.replyTo && <QuotedReply reply={message.replyTo} />}
                     {message.text.trim() && (
-                        <div className={`bubble bubble-${message.role}`}>
+                        <div
+                            className={`bubble bubble-${message.role}`}
+                            id={messageAnchorId(message.id)}
+                            data-message-id={message.id}
+                        >
                             <RichText text={message.text} live={!message.streaming} />
                             {message.streaming && <span className="caret" />}
                         </div>
@@ -40,6 +45,46 @@ export function Message({ state, message }: Props): React.JSX.Element | null {
                 </>
             );
     }
+}
+
+/** The DOM id a message bubble answers to, so a quote can scroll back to it. */
+export function messageAnchorId(id: string): string {
+    return `msg-${id}`;
+}
+
+/**
+ * The quoted-reply header above a user bubble, the way iOS Messages and
+ * WhatsApp draw one: a thin accent bar, the question in muted text, two lines at
+ * most. It exists because with several questions outstanding a bare "yes"
+ * landed as a message attached to nothing.
+ *
+ * Clicking it scrolls the original back into view and flashes it, which is the
+ * only way to see the full question once the quote has been truncated. If the
+ * original has aged out of the transcript the quote still reads correctly — the
+ * text is stored on the reply, not looked up — and the click simply does
+ * nothing rather than jumping somewhere wrong.
+ */
+function QuotedReply({ reply }: { reply: ReplyRef }): React.JSX.Element {
+    const jump = (): void => {
+        const target = document.getElementById(messageAnchorId(reply.id));
+        if (!target) return;
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+        target.classList.remove("bubble-found");
+        // Reflow between remove and add, so a second click re-runs the flash.
+        void target.offsetWidth;
+        target.classList.add("bubble-found");
+        window.setTimeout(() => target.classList.remove("bubble-found"), 1600);
+    };
+
+    return (
+        <button type="button" className="reply-quote" onClick={jump} title={reply.text}>
+            <span className="reply-quote-bar" aria-hidden="true" />
+            <span className="reply-quote-text">
+                <span className="reply-quote-label">replying to</span>
+                {reply.text}
+            </span>
+        </button>
+    );
 }
 
 /**
@@ -357,17 +402,23 @@ function shortenPath(label: string): string {
 /**
  * One-click replies beneath an assistant bubble. Clicking sends the choice's
  * value through `window.orbit.send`, the same path a typed message takes, so
- * logging, orchestration and history behave identically. The row locks once
- * answered — either by this click or by any later turn in the transcript.
+ * logging, orchestration and history behave identically — plus the id of the
+ * question, which threads the answer to it on screen and in the prompt.
+ *
+ * The row locks once this user has clicked it, and not before. It used to lock
+ * on any later user turn as well, on the theory that a question more than one
+ * turn old was stale. That was wrong: with several threads in flight the user
+ * answers questions out of order, and an expired chip meant retyping an answer
+ * Orbit had already offered. Threading is what removes the ambiguity that the
+ * expiry was standing in for, so the expiry goes.
  */
 function MessageChoices({ state, message }: Props): React.JSX.Element | null {
     const [clicked, setClicked] = useState<string | undefined>(undefined);
     const choices = message.choices;
     if (!choices?.length || message.streaming) return null;
 
-    const index = state.messages.findIndex((m) => m.id === message.id);
-    const superseded = index >= 0 && state.messages.slice(index + 1).some((m) => m.role === "user");
-    const spent = clicked !== undefined || superseded || state.runtime !== "ready";
+    const answered = state.messages.some((m) => m.replyTo?.id === message.id);
+    const spent = clicked !== undefined || answered || state.runtime !== "ready";
 
     return (
         <div className={`choices ${spent ? "spent" : ""}`} role="group" aria-label="Quick replies">
@@ -381,7 +432,7 @@ function MessageChoices({ state, message }: Props): React.JSX.Element | null {
                     onClick={() => {
                         if (spent) return;
                         setClicked(choice.value);
-                        void window.orbit.send(choice.value);
+                        void window.orbit.send(choice.value, message.id);
                     }}
                 >
                     {choice.label}

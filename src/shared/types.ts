@@ -90,12 +90,28 @@ export interface ChatChoice {
     value: string;
 }
 
+/**
+ * What a message is an answer to.
+ *
+ * Carried on the user's message rather than looked up at render time: the
+ * quoted text has to survive the original question scrolling out of the
+ * transcript, and it has to survive a restart, so it is stored, not derived.
+ */
+export interface ReplyRef {
+    /** The id of the message being answered. Used to scroll back to it. */
+    id: string;
+    /** A short quote of the question, already truncated for display. */
+    text: string;
+}
+
 export interface ChatMessage {
     id: string;
     role: ChatRole;
     text: string;
     kind: ChatKind;
     at: number;
+    /** Set when this message answers an earlier one, e.g. a quick-reply chip. */
+    replyTo?: ReplyRef;
     /** True while Orbit is still streaming this message in. */
     streaming?: boolean;
     /** Resolution label once a request card has been answered. */
@@ -870,7 +886,12 @@ export interface OrbitState {
 export interface OrbitApi {
     getState(): Promise<OrbitState>;
     onState(cb: (state: OrbitState) => void): () => void;
-    send(prompt: string): Promise<void>;
+    /**
+     * Send a user turn. `replyToId` names an earlier message this answers — set
+     * by a quick-reply chip so the answer is threaded to its question both on
+     * screen and in what the model receives.
+     */
+    send(prompt: string, replyToId?: string): Promise<void>;
     abort(): Promise<void>;
     answerRequest(requestId: string, optionId: string, freeform?: string): Promise<void>;
     cancelAgent(agentId: string): Promise<void>;

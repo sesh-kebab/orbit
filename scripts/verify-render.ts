@@ -19,8 +19,9 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MissionControl } from "../src/renderer/components/MissionControl.js";
+import { Message } from "../src/renderer/components/Message.js";
 import { NavRail, railState } from "../src/renderer/components/NavRail.js";
-import { DECK_SECTIONS, isDeckSection, type DeckSection, type OrbitState } from "../src/shared/types.js";
+import { DECK_SECTIONS, isDeckSection, type ChatMessage, type DeckSection, type OrbitState } from "../src/shared/types.js";
 import { AGENTS, EPOCH, REQUEST, SCHEDULES, baseState } from "../tools/capture/demo.js";
 
 let passed = 0;
@@ -326,6 +327,75 @@ function posed(patch: Partial<OrbitState> = {}, section: DeckSection = "board"):
     const markup = render(bogus);
     check("an unknown saved section falls back to the board", count(markup, 'class="rail-tab on"'), 1);
     ok("and it is the board", /class="rail-tab on"[\s\S]*?class="rail-label">board</.test(markup));
+}
+
+// MARK: - Quick-reply threading
+//
+// The user could not tell which question a chip's "yes" was answering, and said
+// he would not expect Orbit to either. Two things follow from that, and both are
+// visible in the markup: a quoted header above his bubble, and chips that do not
+// expire just because a later turn happened.
+
+{
+    const question: ChatMessage = {
+        id: "q1",
+        role: "orbit",
+        text: "The branch is green and the suites pass. Shall I merge and push it?",
+        kind: { type: "text" },
+        at: EPOCH - 60_000,
+        choices: [
+            { label: "Merge", value: "yes, merge it" },
+            { label: "Wait", value: "not yet" },
+        ],
+    };
+    const elsewhere: ChatMessage = {
+        id: "u1",
+        role: "user",
+        text: "what did the calendar scan find",
+        kind: { type: "text" },
+        at: EPOCH - 30_000,
+    };
+    const answer: ChatMessage = {
+        id: "u2",
+        role: "user",
+        text: "yes, merge it",
+        kind: { type: "text" },
+        at: EPOCH,
+        replyTo: { id: "q1", text: "Shall I merge and push it?" },
+    };
+
+    const draw = (state: OrbitState): string =>
+        renderToStaticMarkup(
+            createElement(
+                "div",
+                null,
+                ...state.messages.map((message) =>
+                    createElement(Message, { key: message.id, state, message }),
+                ),
+            ),
+        );
+
+    const threaded = draw(baseState({ messages: [question, elsewhere, answer] }));
+    ok("a threaded reply draws a quoted header", threaded.includes('class="reply-quote"'));
+    ok("the header quotes the question", threaded.includes("Shall I merge and push it?"));
+    ok("the header says what it is", threaded.includes("replying to"));
+    ok("the question is anchored so the quote can scroll to it", threaded.includes('id="msg-q1"'));
+    check("only the reply carries a header", count(threaded, 'class="reply-quote"'), 1);
+
+    // The failure this replaces: chips greyed out the moment any later user
+    // turn arrived, so an answer to an older question had to be retyped.
+    ok(
+        "an unanswered question keeps its chips live across later turns",
+        !/class="choices spent"/.test(draw(baseState({ messages: [question, elsewhere] }))),
+    );
+    ok(
+        "chips lock once the question has actually been answered",
+        /class="choices spent"/.test(threaded),
+    );
+
+    // A typed message is untouched.
+    const typed = draw(baseState({ messages: [elsewhere] }));
+    ok("a typed message carries no header", !typed.includes("reply-quote"));
 }
 
 if (failures.length > 0) {

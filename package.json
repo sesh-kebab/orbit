@@ -56,7 +56,8 @@
         "verify:design": "esbuild scripts/verify-design.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-design.mjs --log-level=warning && node node_modules/.cache/verify-design.mjs",
         "verify:prompt": "esbuild scripts/verify-prompt.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-prompt.mjs --log-level=warning && node node_modules/.cache/verify-prompt.mjs",
         "verify:memory": "esbuild scripts/verify-memory.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-memory.mjs --log-level=warning && node node_modules/.cache/verify-memory.mjs",
-        "verify:outbound": "esbuild scripts/verify-outbound.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-outbound.mjs --log-level=warning && node node_modules/.cache/verify-outbound.mjs"
+        "verify:outbound": "esbuild scripts/verify-outbound.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-outbound.mjs --log-level=warning && node node_modules/.cache/verify-outbound.mjs",
+        "verify:replies": "esbuild scripts/verify-replies.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-replies.mjs --log-level=warning && node node_modules/.cache/verify-replies.mjs"
     },
     "dependencies": {
         "@github/copilot-sdk": "^1.0.8",
