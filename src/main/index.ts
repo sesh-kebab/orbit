@@ -220,7 +220,9 @@ function rebuildIfDev(): void {
 
 function registerIpc(): void {
     ipcMain.handle("orbit:getState", () => store.get());
-    ipcMain.handle("orbit:send", (_event, prompt: string) => orchestrator.send(prompt));
+    ipcMain.handle("orbit:send", (_event, prompt: string, replyToId?: string) =>
+        orchestrator.send(prompt, replyToId),
+    );
     ipcMain.handle("orbit:abort", () => orchestrator.abort());
     ipcMain.handle(
         "orbit:answerRequest",
