@@ -3,16 +3,40 @@ import type { PermissionRequest, PermissionRequestResult } from "@github/copilot
 type ApproveForSession = Extract<PermissionRequestResult, { kind: "approve-for-session" }>;
 type SessionApproval = NonNullable<ApproveForSession["approval"]>;
 import type { PendingRequest, Settings } from "../../shared/types.js";
+import {
+    describeOutboundSend,
+    outboundDetail,
+    outboundSubject,
+    outboundTitle,
+} from "./outbound.js";
 
 export interface PermissionDescription {
     title: string;
     subject?: string;
     detail?: string;
     canOfferSessionApproval: boolean;
+    /** Set when this puts words in front of someone who is not Seshi. */
+    outbound?: boolean;
 }
 
 /** Turn a raw SDK permission request into something a human can judge at a glance. */
 export function describePermission(request: PermissionRequest): PermissionDescription {
+    // Checked ahead of the kind switch: a send is a send whether it arrives as
+    // an MCP call or a custom tool, and the audience matters more than the
+    // plumbing it came down.
+    const send = describeOutboundSend(request);
+    if (send) {
+        return {
+            title: outboundTitle(send),
+            subject: outboundSubject(send),
+            detail: outboundDetail(send),
+            // Never offer "for the session": approving this audience must not
+            // silently approve the next one.
+            canOfferSessionApproval: false,
+            outbound: true,
+        };
+    }
+
     switch (request.kind) {
         case "shell": {
             // `identifier` is often the whole command line, which would just
@@ -87,6 +111,12 @@ export function autoDecide(
     request: PermissionRequest,
     settings: Settings,
 ): PermissionRequestResult | undefined {
+    // Ahead of `yolo`, deliberately. "Approve everything" is a statement about
+    // Orbit's own risk appetite with Seshi's files and shell; it was never a
+    // mandate to speak to his colleagues unsupervised. On 16 Sep it was read as
+    // one, and a message went into a chat with an extra person in it.
+    if (describeOutboundSend(request)) return undefined;
+
     if (settings.yolo) return { kind: "approve-once" };
 
     if (!settings.autoApproveReads) return undefined;
@@ -115,11 +145,15 @@ export function autoDecide(
 export function permissionOptions(
     description: PermissionDescription,
 ): PendingRequest["options"] {
-    const options: PendingRequest["options"] = [{ id: "once", label: "Allow once", tone: "primary" }];
+    // "Allow once" is the right words for a shell command and the wrong words
+    // for a message: the button should say what it does to other people.
+    const allowLabel = description.outbound ? "Send it" : "Allow once";
+    const denyLabel = description.outbound ? "Don't send" : "Nope";
+    const options: PendingRequest["options"] = [{ id: "once", label: allowLabel, tone: "primary" }];
     if (description.canOfferSessionApproval) {
         options.push({ id: "session", label: "Allow for session", tone: "neutral" });
     }
-    options.push({ id: "deny", label: "Nope", tone: "danger" });
+    options.push({ id: "deny", label: denyLabel, tone: "danger" });
     return options;
 }
 
@@ -139,6 +173,11 @@ export function optionToDecision(
 function buildSessionApproval(
     request: PermissionRequest,
 ): SessionApproval | undefined {
+    // A blanket rule for "workiq/create_entity" would re-open the hole this
+    // guard closes, so an outbound send is never session-approvable even if the
+    // card somehow offered it.
+    if (describeOutboundSend(request)) return undefined;
+
     switch (request.kind) {
         case "shell": {
             const commandIdentifiers = (request.commands ?? []).map((c) => c.identifier);
