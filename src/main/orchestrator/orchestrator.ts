@@ -43,6 +43,17 @@ import {
     type ActivityInput,
 } from "../activity.js";
 import { loadMcpServers } from "../mcp.js";
+import {
+    capabilityOf,
+    dueForRetryAmong,
+    gaveUpMessage,
+    noteAttempt,
+    noteFailure,
+    noteRecovery,
+    recoveredMessage,
+    unavailableMessage,
+    type McpHealth,
+} from "../mcpHealth.js";
 import type { InteractionRecord, LoggedToolCall, Persistence, SessionSnapshot } from "../persistence.js";
 import { findCopilotCli, missingCliMessage } from "../runtime.js";
 import type { Store } from "../store.js";
@@ -375,6 +386,12 @@ export class Orchestrator {
 
     private async createOrbitSession(): Promise<CopilotSession> {
         const settings = this.settings;
+        // A new session spawns new server processes, so it is a new race and
+        // deserves a full set of attempts. Carrying a previous session's verdict
+        // across — `applySettings` rebuilds the session on a model change —
+        // would mean a server that gave up an hour ago is never tried again.
+        this.mcpHealth.clear();
+        this.reconnectingMcp = undefined;
         return this.client!.createSession({
             model: settings.model === "auto" ? undefined : settings.model,
             workingDirectory: settings.workspace,
@@ -1553,24 +1570,144 @@ export class Orchestrator {
             this.pushMessage({ role: "system", text: clip(message, 240), kind: { type: "error" } });
         });
 
-        // A server that fails to connect is dropped for the whole session, and
-        // Orbit has no way to know it ever existed — it will simply insist it
-        // has no mail tools. Say so plainly instead.
+        // A server that fails to load used to be dropped for the whole session,
+        // announced as eighty clipped characters of raw JSON-RPC error, and left
+        // that way until someone restarted the app. See `mcpHealth.ts` for why
+        // none of that was true or useful. Both events are wired: the bulk one
+        // at startup, and the per-server one for anything that drops later.
         session.on("session.mcp_servers_loaded", (event) => {
             const data = event.data as
                 | { servers?: Array<{ name: string; status: string; error?: string }> }
                 | undefined;
             const failed = (data?.servers ?? []).filter((server) => server.status === "failed");
+            for (const server of data?.servers ?? []) {
+                if (server.status === "connected") this.markMcpConnected(server.name);
+            }
             if (failed.length === 0) return;
-            const detail = failed
-                .map((server) => `${server.name}${server.error ? ` (${clip(server.error, 80)})` : ""}`)
-                .join(", ");
-            this.pushMessage({
-                role: "system",
-                text: `MCP server unavailable this session: ${detail}. Restart Orbit to retry.`,
-                kind: { type: "error" },
-            });
+            const records = failed.map((server) => this.markMcpFailed(server.name, server.error));
+            const text = unavailableMessage(records);
+            if (text) this.pushMessage({ role: "system", text, kind: { type: "error" } });
         });
+
+        session.on("session.mcp_server_status_changed", (event) => {
+            const data = event.data as
+                | { serverName?: string; status?: string; error?: string }
+                | undefined;
+            const name = data?.serverName;
+            if (!name) return;
+            if (data?.status === "connected") {
+                this.markMcpConnected(name);
+                return;
+            }
+            if (data?.status !== "failed") return;
+            // Only worth a line if this is news. A retry that fails again is
+            // accounted for by `retryMcpServers`, quietly, which is the point.
+            const known = this.mcpHealth.get(name);
+            const record = this.markMcpFailed(name, data.error);
+            if (known && known.state !== "connected") return;
+            const text = unavailableMessage([record]);
+            if (text) this.pushMessage({ role: "system", text, kind: { type: "error" } });
+        });
+    }
+
+    // MARK: - MCP health
+
+    /**
+     * What each configured MCP server is doing, and how many times Orbit has
+     * tried to bring it back. Session-scoped: a restart starts the count again,
+     * which is correct, because a restart is a fresh race.
+     */
+    private readonly mcpHealth = new Map<string, McpHealth>();
+
+    /**
+     * The server currently being reconnected, if any. It guards two things at
+     * once: a slow reconnect overlapping the next tick's attempt, and the status
+     * events the restart itself provokes.
+     *
+     * The second matters more than it looks. `restartServer` stops and starts
+     * the process, so the host reports `connected` the moment the handshake
+     * lands — which for `ado` is *before* the `tools/list` that is the actual
+     * failure. Believing that event would reset the attempt count on every pass,
+     * so the five attempts would never run out, the chat line would repeat, and
+     * the sort by first failure would starve every other server behind a
+     * permanently "just recovered" one. Only the verdict at the end of the
+     * attempt is allowed to write the record for the server being attempted.
+     */
+    private reconnectingMcp: string | undefined;
+
+    private markMcpFailed(name: string, error: string | undefined): McpHealth {
+        const known = this.mcpHealth.get(name);
+        // The raw error is genuinely useful, just not in chat.
+        console.error(`[orbit] MCP server ${name} failed: ${error ?? "no detail given"}`);
+        if (this.reconnectingMcp === name && known) return known;
+        const record = noteFailure(known, name, error, Date.now());
+        this.mcpHealth.set(name, record);
+        return record;
+    }
+
+    private markMcpConnected(name: string): void {
+        if (this.reconnectingMcp === name) return;
+        const known = this.mcpHealth.get(name);
+        if (known?.state === "connected") return;
+        this.mcpHealth.set(name, noteRecovery(name, Date.now()));
+    }
+
+    /**
+     * Bring failed MCP servers back, on the tick that already exists.
+     *
+     * The retry is `restartServer` followed by a live `listTools`, because a
+     * restart that connects but still cannot answer `tools/list` is exactly the
+     * failure being fixed, and treating it as a success would put the tools back
+     * on the board without putting them in the session.
+     *
+     * One server per pass, deliberately. Retrying all three at once recreates
+     * the contention that made `ado` lose the race at startup in the first
+     * place: alone it answers in ten seconds, alongside the others in twenty.
+     */
+    private async retryMcpServers(): Promise<void> {
+        const session = this.orbit;
+        if (!session || this.reconnectingMcp !== undefined) return;
+        const due = dueForRetryAmong(this.mcpHealth.values(), Date.now());
+        const next = due[0];
+        if (!next) return;
+
+        this.reconnectingMcp = next.name;
+        try {
+            let outcome: { ok: boolean; error?: string };
+            try {
+                await session.rpc.mcp.restartServer({ serverName: next.name });
+                const tools = await session.rpc.mcp.listTools({ serverName: next.name });
+                outcome = { ok: (tools.tools?.length ?? 0) > 0 };
+                if (!outcome.ok) outcome.error = "it came back with no tools";
+            } catch (error) {
+                outcome = { ok: false, error: error instanceof Error ? error.message : String(error) };
+            }
+
+            // Applied to the record this attempt started from, never to
+            // whatever the status events left in the map meanwhile.
+            const after = noteAttempt(next, outcome, Date.now());
+            this.mcpHealth.set(next.name, after);
+
+            if (after.state === "connected") {
+                this.say(recoveredMessage(after, next.attempts + 1));
+                return;
+            }
+            console.error(
+                `[orbit] MCP reconnect ${next.name} attempt ${after.attempts} failed: ${outcome.error ?? "no detail given"}`,
+            );
+            // Only the last word gets said. The attempts in between are the
+            // machinery working, and narrating machinery is how the old message
+            // became noise.
+            if (after.state === "gave-up" || after.state === "unrecoverable") {
+                this.pushMessage({
+                    role: "system",
+                    text: gaveUpMessage(after),
+                    kind: { type: "error" },
+                });
+            }
+        } finally {
+            this.reconnectingMcp = undefined;
+        }
     }
 
     // MARK: - Agents
@@ -2623,6 +2760,15 @@ export class Orchestrator {
             this.clearMeetingTimers();
             return;
         }
+        // Same reasoning one step earlier: while the calendar's own MCP server is
+        // down and being reconnected, a scan can only produce the AppleScript
+        // fallback and a wrong diagnosis. It costs a Copilot run to get that
+        // wrong, so it waits out the backoff. Only while it is *being* retried,
+        // though — a server that has given up is never coming back on its own,
+        // and a permanent skip here would silently switch meeting heads-ups off
+        // for the session. The timers already armed are left alone either way,
+        // because "I cannot check" is not "you are free".
+        if (this.mcpCalendarOutage()?.state === "retrying") return;
         // A scan that never reports back — an agent cancelled out from under
         // us, say — must not wedge the feature for the rest of the session.
         if (this.scanningCalendar && Date.now() - this.lastCalendarScanAt < Orchestrator.SCAN_GIVE_UP_MS) {
@@ -2728,12 +2874,46 @@ export class Orchestrator {
         // Already asked. The answer is a sign-in, and nagging does not perform it.
         if (existing) return;
 
+        // A scan agent with no calendar tool does not report "I have no calendar
+        // tool" — it falls back to AppleScript, is refused, and reports a
+        // permissions problem. On 15 September that turned an MCP server that had
+        // failed to load into two runs telling the user to go and fix Calendar.app
+        // permissions that were never the cause. So the server is checked before
+        // the user is blamed, and the reconnect in `retryMcpServers` is left to do
+        // its work rather than raising a decision nobody can action.
+        const outage = this.mcpCalendarOutage();
+        if (outage?.state === "retrying") {
+            console.log(
+                `[orbit] calendar unreadable while the ${outage.name} MCP server is down; waiting for the reconnect before blaming anything`,
+            );
+            return;
+        }
+
+        // Past retrying there is nothing left to wait for, so the item is raised
+        // — but with the real cause in front of the scan's guess, because the
+        // scan's guess in that situation is always the AppleScript fallback.
+        const cause = outage
+            ? `The ${outage.name} MCP server never started, which is where your calendar comes from. `
+            : "";
         const detail = this.calendarProblem.detail;
         this.raiseOpenItem(
-            `${tag} I cannot read your calendar, so I have no idea what is in your day. ${detail}`,
+            `${tag} I cannot read your calendar, so I have no idea what is in your day. ${cause}${detail}`,
             "calendar scan",
         );
-        this.say(calendarUnavailableMessage(detail));
+        this.say(`${cause}${calendarUnavailableMessage(detail)}`);
+    }
+
+    /**
+     * A down MCP server that was supposed to be supplying the calendar, if there
+     * is one. Matched on the capability rather than the server name, so a
+     * differently-named mail server is still covered.
+     */
+    private mcpCalendarOutage(): McpHealth | undefined {
+        for (const health of this.mcpHealth.values()) {
+            if (health.state === "connected") continue;
+            if (capabilityOf(health.name).includes("calendar")) return health;
+        }
+        return undefined;
     }
 
     /** Replace the armed timers with the ones this plan calls for. */
@@ -3872,6 +4052,12 @@ export class Orchestrator {
         // the store. Offset again so the three slow jobs never share a tick.
         if (this.tickCount % 300 === 75) {
             this.refreshFreshness();
+        }
+        // Bringing failed MCP servers back. Every five seconds is cheap — it
+        // does nothing at all unless a server is both failed and past its
+        // backoff — and the schedule that matters lives in `mcpHealth.ts`.
+        if (this.tickCount % 5 === 0 && this.store.get().runtime === "ready") {
+            void this.retryMcpServers();
         }
 
         const state: OrbitState = this.store.get();
