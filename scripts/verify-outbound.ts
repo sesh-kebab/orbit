@@ -18,6 +18,7 @@ import {
     permissionOptions,
 } from "../src/main/orchestrator/permissions.js";
 import { describeOutboundSend } from "../src/main/orchestrator/outbound.js";
+import { buildAgentPrompt } from "../src/main/orchestrator/persona.js";
 import type { Settings } from "../src/shared/types.js";
 
 let passed = 0;
@@ -226,6 +227,34 @@ check(
 
 const missingArgs = mcp("create_entity", {});
 check("a tool call with no arguments is not guessed at", describeOutboundSend(missingArgs) === undefined);
+
+// ── Report ───────────────────────────────────────────────────────────────────
+
+// ── The brief every agent carries ────────────────────────────────────────────
+
+const agentBrief = buildAgentPrompt("Post a note to the team.");
+
+check(
+    "the brief routes calendar and mail through WorkIQ",
+    agentBrief.includes("WorkIQ MCP tools"),
+);
+check(
+    "and names the wrong routes so they are not reinvented",
+    agentBrief.includes("AppleScript") && agentBrief.includes("az CLI"),
+    agentBrief.slice(0, 0),
+);
+check(
+    "the brief makes an agent name the audience before sending",
+    agentBrief.includes("say who it reaches, by name"),
+);
+check(
+    "and refuses the superset excuse by name",
+    agentBrief.includes("only chat with both of them"),
+);
+check(
+    "and tells the agent to stop rather than report afterwards",
+    agentBrief.includes("ask_user") && agentBrief.includes("afterwards is not good"),
+);
 
 // ── Report ───────────────────────────────────────────────────────────────────
 
