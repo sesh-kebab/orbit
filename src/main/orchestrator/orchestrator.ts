@@ -27,6 +27,7 @@ import type {
     PendingRequest,
     Proposal,
     ProposalStatus,
+    ReplyRef,
     Schedule,
     Settings,
 } from "../../shared/types.js";
@@ -60,6 +61,7 @@ import { AgentRunner } from "./agentRunner.js";
 import { selectAgentTools } from "./agentTools.js";
 import { artifactPathsIn, artifactSearchDirs, resolveArtifactPaths } from "./artifacts.js";
 import { parseChoices, stripChoicesForStream } from "./choices.js";
+import { buildReplyPrompt, quoteQuestion } from "./replies.js";
 import { clip, elapsed, summarise } from "./describe.js";
 import { evolutionBlock, parseEvolutionLog, type EvolutionEntry } from "./evolution.js";
 import {
@@ -1383,12 +1385,28 @@ export class Orchestrator {
 
     // MARK: - Chat
 
-    async send(prompt: string): Promise<void> {
+    /**
+     * A user turn.
+     *
+     * `replyToId` arrives when the turn came from a quick-reply chip. The
+     * question it answers is looked up here, in main, rather than passed in from
+     * the renderer, so the quote is always the message Orbit actually said. Two
+     * things come out of it: a `replyTo` on the stored message, which draws the
+     * quoted header and survives a restart with the rest of the transcript, and
+     * an "In reply to" prefix on the prompt, so a bare "yes" is never ambiguous
+     * to the model either. If the id names nothing — a transcript trimmed by the
+     * session limit, say — the reply still sends, just unthreaded.
+     */
+    async send(prompt: string, replyToId?: string): Promise<void> {
         const text = prompt.trim();
         if (!text) return;
         this.poke();
-        this.pushMessage({ role: "user", text, kind: { type: "text" } });
-        this.logInteraction({ kind: "turn", role: "user", text });
+
+        const replyTo = this.resolveReplyRef(replyToId);
+        const forModel = buildReplyPrompt(text, replyTo?.text);
+
+        this.pushMessage({ role: "user", text, kind: { type: "text" }, ...(replyTo ? { replyTo } : {}) });
+        this.logInteraction({ kind: "turn", role: "user", text: forModel });
 
         if (!this.orbit) {
             this.pushMessage({
@@ -1406,8 +1424,8 @@ export class Orchestrator {
         this.store.flush();
 
         try {
-            if (process.env.ORBIT_DEBUG === "1") console.log("[orbit] sending:", text.slice(0, 60));
-            const id = await this.orbit.send({ prompt: text });
+            if (process.env.ORBIT_DEBUG === "1") console.log("[orbit] sending:", forModel.slice(0, 60));
+            const id = await this.orbit.send({ prompt: forModel });
             if (process.env.ORBIT_DEBUG === "1") console.log("[orbit] queued message", id);
         } catch (error) {
             if (process.env.ORBIT_DEBUG === "1") console.error("[orbit] send failed", error);
@@ -1421,6 +1439,15 @@ export class Orchestrator {
                 kind: { type: "error" },
             });
         }
+    }
+
+    /** The question behind a chip click, quoted. Undefined if it cannot be found. */
+    private resolveReplyRef(replyToId: string | undefined): ReplyRef | undefined {
+        if (!replyToId) return undefined;
+        const target = this.store.get().messages.find((message) => message.id === replyToId);
+        if (!target || target.role === "user") return undefined;
+        const quoted = quoteQuestion(target.text);
+        return quoted ? { id: target.id, text: quoted } : undefined;
     }
 
     async abort(): Promise<void> {

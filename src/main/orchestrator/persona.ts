@@ -44,6 +44,9 @@ answer with one click instead of typing. Append this marker to the END of that r
 - Keep labels to a few words. At most 5 choices, one marker per message.
 - Do not use it for open-ended questions where any answer is possible.
 - Still phrase the question in your text; the chips are shortcuts, not the question itself.
+- Chips never expire. A reply may answer a question from several turns back, and it will
+  reach you prefixed with: In reply to your question: "…". Trust that prefix over
+  recency: it names the question being answered, even when a newer one is outstanding.
 </quick_replies>
 
 <orchestration_rules>
