@@ -95,6 +95,12 @@ import { checkDesignRevision } from "./design.js";
 import { correctMemory as applyMemoryCorrection, type MemoryCorrection } from "./memory.js";
 import { deriveBoard } from "./board.js";
 import {
+    SILENCE_AFFORDANCE,
+    SILENCE_TOKEN,
+    decideInterrupt,
+    isSilence,
+} from "./attention.js";
+import {
     OPEN_ITEM_CAP,
     describeChasing,
     noteRaised,
@@ -166,6 +172,13 @@ export class Orchestrator {
     private streamingRaw = "";
     private updateQueue: string[] = [];
     private updateTimer: NodeJS.Timeout | undefined;
+    /**
+     * How many turns Orbit has taken since the user last said anything, and
+     * when the last of them went out. The pair the chase loops throttle on: see
+     * `attention.ts` for why per-item back-off could not see this.
+     */
+    private unansweredTurns = 0;
+    private lastProactiveAt: number | undefined;
     /** Pending staggered catch-up runs, so a shutdown can call them off. */
     private readonly catchUpTimers = new Set<NodeJS.Timeout>();
     /**
@@ -1402,6 +1415,11 @@ export class Orchestrator {
         if (!text) return;
         this.poke();
 
+        // He is back. Whatever evidence there was that Orbit was talking to
+        // nobody is spent, and the chase loops go back to full volume.
+        this.unansweredTurns = 0;
+        this.lastProactiveAt = undefined;
+
         const replyTo = this.resolveReplyRef(replyToId);
         const forModel = buildReplyPrompt(text, replyTo?.text);
 
@@ -1508,6 +1526,19 @@ export class Orchestrator {
                 }
                 return;
             }
+            if (isSilence(content)) {
+                // Orbit read a nudge and decided it was not worth a turn. Drop
+                // it without a trace in the chat, and without counting it
+                // against him: a turn nobody saw is not a turn he ignored.
+                if (streamingId) {
+                    this.store.update((state) => {
+                        state.messages = state.messages.filter((m) => m.id !== streamingId);
+                    });
+                    this.store.flush();
+                }
+                this.logInteraction({ kind: "turn", role: "orbit", text: SILENCE_TOKEN, tools: this.takeTurnTools() });
+                return;
+            }
             const { text: display, choices } = parseChoices(content);
             this.store.update((state) => {
                 const existing = state.messages.find((m) => m.id === streamingId);
@@ -1528,6 +1559,11 @@ export class Orchestrator {
             });
             this.nudge(display);
             this.store.flush();
+            // Every turn Orbit takes while the user is quiet counts, whatever
+            // prompted it: the tally measures how much has been said into a
+            // silence. Only the chase loops consult it before speaking.
+            this.unansweredTurns += 1;
+            this.lastProactiveAt = Date.now();
             this.logInteraction({ kind: "turn", role: "orbit", text: display, tools: this.takeTurnTools() });
         });
 
@@ -2143,6 +2179,12 @@ export class Orchestrator {
         });
         this.store.flush();
         resolver?.resolve({ optionId, freeform });
+        if (optionId !== "timeout") {
+            // He answered a card, so he is at the keyboard. Same reset as a
+            // typed message: a timeout is not, and must not clear the tally.
+            this.unansweredTurns = 0;
+            this.lastProactiveAt = undefined;
+        }
         // A lane that still shows him as blocked a second after he unblocked it
         // reads as the board being wrong, not as the board being slow.
         this.refreshBoard();
@@ -3101,7 +3143,7 @@ export class Orchestrator {
         return selectOutstanding(this.store.get().openItems, OPEN_ITEM_CAP);
     }
 
-    private openItemsBlock(items: OpenItem[]): string {
+    private openItemsBlock(items: OpenItem[], asNudge = false): string {
         const lines = items
             .map((item) => {
                 const age = elapsed(item.createdAt);
@@ -3119,6 +3161,7 @@ export class Orchestrator {
             "Raise the most pressing one when it is a sensible moment — one line, with quick",
             "replies — rather than all of them at once. Call orbit_resolve_open_item as soon as",
             "the user answers, declines, or the question stops mattering.",
+            ...(asNudge ? ["", SILENCE_AFFORDANCE] : []),
             "</open_items>",
         ].join("\n");
     }
@@ -3210,6 +3253,7 @@ export class Orchestrator {
         const state = this.store.get();
         if (state.orbitBusy || !this.orbit) return;
         if (Date.now() - state.lastInteractionAt > Orchestrator.RECENT_INTERACTION_MS) return;
+        if (!this.mayInterrupt("open decisions")) return;
 
         const now = Date.now();
         const due = selectForReRaise(state.openItems, now);
@@ -3225,7 +3269,7 @@ export class Orchestrator {
             );
         });
         this.persistOpenItems();
-        this.notifyOrbit(this.openItemsBlock(due));
+        this.notifyOrbit(this.openItemsBlock(due, true));
     }
 
     private persistOpenItems(): void {
@@ -3467,6 +3511,7 @@ export class Orchestrator {
         const state = this.store.get();
         if (state.orbitBusy || !this.orbit) return;
         if (Date.now() - state.lastInteractionAt > Orchestrator.RECENT_INTERACTION_MS) return;
+        if (!this.mayInterrupt("unfinished work")) return;
 
         const due = chaseableActivity(this.activity);
         if (due.length === 0) return;
@@ -3476,7 +3521,27 @@ export class Orchestrator {
             entry.chaseCount = (entry.chaseCount ?? 0) + 1;
         }
         this.persistActivity();
-        this.notifyOrbit(activityChaseBlock(due));
+        this.notifyOrbit(`${activityChaseBlock(due)}\n\n${SILENCE_AFFORDANCE}`);
+    }
+
+    /**
+     * Whether a self-initiated chase may interrupt right now.
+     *
+     * The gate the per-item back-off in `openItems.ts` could not be: it throttles
+     * the channel rather than the queue, so fifty individually-patient decisions
+     * cannot add up to a message every five minutes. Logged when it refuses,
+     * because a loop that has gone quiet and cannot say so is indistinguishable
+     * from one that has broken.
+     */
+    private mayInterrupt(what: string): boolean {
+        const verdict = decideInterrupt(
+            { unanswered: this.unansweredTurns, lastProactiveAt: this.lastProactiveAt },
+            Date.now(),
+        );
+        if (!verdict.speak && process.env.ORBIT_DEBUG === "1") {
+            console.log(`[orbit] holding ${what}: ${verdict.because}`);
+        }
+        return verdict.speak;
     }
 
     private persistActivity(): void {
