@@ -22,6 +22,7 @@
  * for one.
  */
 import type { MemoryNote } from "../../shared/types.js";
+import { describeMiss, findById, findIndexById } from "./ids.js";
 
 /** How many superseded wordings to keep before dropping the oldest. */
 export const PRIOR_TEXT_CAP = 5;
@@ -69,9 +70,14 @@ export function correctMemory(
     now: number,
 ): CorrectionOutcome {
     const all = [...memories];
-    const index = all.findIndex((memory) => memory.id === memoryId);
+    const index = findIndexById(all, memoryId);
     if (index === -1) {
-        return { memories: all, error: "No memory with that id. List them first with orbit_list_memories." };
+        const lookup = findById(all, memoryId);
+        const why =
+            lookup.status === "ambiguous"
+                ? describeMiss(lookup, "memory")
+                : "No memory with that id. List them first with orbit_list_memories.";
+        return { memories: all, error: why };
     }
 
     const text = clip(correction.text, MEMORY_TEXT_CAP);

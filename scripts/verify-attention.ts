@@ -16,6 +16,7 @@
  */
 import {
     ATTENTION_GRACE,
+    FRUITLESS_GRACE,
     QUIET_BASE_MS,
     QUIET_CEILING_MS,
     SILENCE_AFFORDANCE,
@@ -189,6 +190,114 @@ for (const text of ["Going quiet until the 11:00.", "Nothing further from me bef
     check(`"${text}" is not a silence token, it is a turn`, !isSilence(text));
 }
 
+
+// MARK: - The run of fourteen, from the log of 18 September 2026
+
+/**
+ * The other failure mode, and the one the first axis could not see.
+ *
+ * Between 18:59 and 20:04 local on 18 September, the chase loop woke Orbit
+ * fourteen times, exactly five minutes apart, and every single time Orbit read
+ * the nudge and answered `(nothing to add)`. None of it reached Seshi, because
+ * a silence turn is dropped. That is why it survived a day.
+ *
+ * It never widened, because a dropped turn advanced neither `unanswered` nor
+ * `lastProactiveAt`. The gate measured a clock that had stopped. Twenty-nine
+ * such turns were taken across the day.
+ */
+const silentEvening = (() => {
+    const on18 = (hh: number, mm: number): number => Date.UTC(2026, 8, 18, hh + 7, mm);
+    const times: number[] = [];
+    for (let t = on18(18, 59); t <= on18(20, 4); t += 5 * MINUTE) times.push(t);
+    return times;
+})();
+
+check("the evening really was fourteen wake-ups", silentEvening.length === 14);
+
+/** Replay them through the gate, with the fruitless tally advancing as it now does. */
+const survived: number[] = [];
+{
+    let fruitless = 0;
+    let lastNudgeAt: number | undefined;
+    for (const now of silentEvening) {
+        const verdict = decideInterrupt({ unanswered: 0, fruitless, lastNudgeAt }, now);
+        if (!verdict.speak) continue;
+        survived.push(now);
+        lastNudgeAt = now;
+        // Every one of them came back as the silence token that evening.
+        fruitless += 1;
+    }
+}
+
+check(
+    "the fourteen become a handful",
+    survived.length < silentEvening.length / 2,
+    { was: silentEvening.length, now: survived.length },
+);
+check("the first two are still allowed, because grace is real", survived.length >= 2);
+check(
+    "but the gaps widen, which is the whole point",
+    (() => {
+        if (survived.length < 4) return true;
+        const first = survived[2] - survived[1];
+        const last = survived[survived.length - 1] - survived[survived.length - 2];
+        return last > first;
+    })(),
+);
+
+// MARK: - The fruitless axis on its own terms
+
+check(
+    "one wasted wake-up changes nothing",
+    decideInterrupt({ unanswered: 0, fruitless: 1, lastNudgeAt: 0 }, 60 * MINUTE).speak,
+);
+check(
+    "a third in a row, five minutes later, is held",
+    !decideInterrupt({ unanswered: 0, fruitless: 3, lastNudgeAt: 0 }, 5 * MINUTE).speak,
+);
+check(
+    "and released once the gap has been served",
+    decideInterrupt({ unanswered: 0, fruitless: 3, lastNudgeAt: 0 }, 4 * HOUR).speak,
+);
+check(
+    "the fruitless gap is measured from the last nudge, not the last thing spoken",
+    !decideInterrupt(
+        { unanswered: 0, fruitless: 4, lastProactiveAt: 0, lastNudgeAt: 3 * HOUR },
+        3 * HOUR + MINUTE,
+    ).speak,
+);
+check(
+    "a run of fruitless nudges tops out at the same ceiling",
+    requiredGapMs(40, FRUITLESS_GRACE) === QUIET_CEILING_MS,
+);
+
+// MARK: - The two axes cannot make Orbit louder
+
+for (const fruitless of [0, 1, 2, 5, 20]) {
+    const withAxis = decideInterrupt(
+        { unanswered: 6, lastProactiveAt: 0, fruitless, lastNudgeAt: 0 },
+        30 * MINUTE,
+    );
+    const withoutAxis = decideInterrupt({ unanswered: 6, lastProactiveAt: 0 }, 30 * MINUTE);
+    check(
+        `fruitless=${fruitless} never unblocks a turn the first axis refused`,
+        !(withAxis.speak && !withoutAxis.speak),
+    );
+}
+
+check(
+    "an absent fruitless count behaves exactly as before it existed",
+    decideInterrupt({ unanswered: 1, lastProactiveAt: 0 }, MINUTE).speak,
+);
+
+// MARK: - A refusal says which constraint is binding
+
+const bound = decideInterrupt(
+    { unanswered: 2, lastProactiveAt: 0, fruitless: 9, lastNudgeAt: 0 },
+    MINUTE,
+);
+check("the longer hold is the one reported", !bound.speak && /nudges in a row/.test(bound.because));
+
 // MARK: - Report
 
 const saved = theRun.length - allowed.length;
@@ -206,4 +315,8 @@ if (failures.length > 0) {
     for (const failure of failures) console.error(`  ✗ ${failure}`);
     process.exit(1);
 }
+console.log(
+    `Replaying 18 Sep 2026, 18:59 to 20:04 local: ${silentEvening.length} wake-ups, every one silent.` +
+        `\n  Under the fruitless gate: ${survived.length} taken, ${silentEvening.length - survived.length} held.`,
+);
 console.log("Attention gate and silence token verified.\n");

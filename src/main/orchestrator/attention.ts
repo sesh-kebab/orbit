@@ -42,6 +42,30 @@
  *
  * Replayed against 17 September, the run of fifteen becomes six.
  *
+ * ## The second axis, added 18 September
+ *
+ * The rule above throttles on turns *spoken* into a silence. It cannot see the
+ * case where Orbit is woken, reads the nudge, and correctly decides there is
+ * nothing worth saying: that path drops the turn and, as first written,
+ * advanced nothing. So the tally stayed at zero, the gap stayed at zero, and
+ * the loop woke Orbit every five minutes indefinitely. The log of 18 September
+ * shows twenty-nine `(nothing to add)` turns, fourteen of them consecutive
+ * between 18:59 and 20:04, exactly five minutes apart, never once widening.
+ *
+ * None of that reached the user, which is why it survived a day. It is still
+ * wrong: each one is a full turn with full context, and a loop that cannot
+ * notice it is producing nothing will produce nothing forever.
+ *
+ * The fix is a second gate rather than a bigger first one, because the two
+ * measure different parties. `unanswered` is the user declining to engage.
+ * `fruitless` is Orbit reporting that the queue had nothing in it worth his
+ * attention. Either is a reason to slow down; neither implies the other. They
+ * are combined by taking whichever owes the most quiet, so the addition can
+ * only make Orbit quieter.
+ *
+ * A fruitless run is cleared by anything he says, and also by any real turn:
+ * a nudge that was worth taking is proof the loop is earning its wake-ups.
+ *
  * ## What it deliberately does not gate
  *
  * Only the two self-initiated chase loops. A meeting heads-up is tied to a real
@@ -96,12 +120,43 @@ export const SILENCE_AFFORDANCE = [
     `always better than a turn whose only content is that you are staying quiet.`,
 ].join("\n");
 
+/**
+ * Consecutive fruitless nudges allowed before the channel starts widening.
+ *
+ * Same two as `ATTENTION_GRACE`, and for the same reason: one nudge that turns
+ * out to be worth nothing is the cost of doing business, and the third in a row
+ * is a pattern.
+ */
+export const FRUITLESS_GRACE = 2;
+
 /** What the channel knows about itself when it is deciding whether to speak. */
 export interface AttentionFacts {
     /** Turns Orbit has taken since the user last said anything. */
     unanswered: number;
     /** When Orbit last spoke unprompted. Undefined when it has not yet. */
     lastProactiveAt?: number;
+    /**
+     * Nudges in a row that Orbit answered with the silence token.
+     *
+     * Counted separately from `unanswered` because it measures the opposite
+     * party. `unanswered` is the user declining to engage; this is Orbit itself
+     * saying the loop had nothing worth carrying. Both should slow the loop
+     * down, and neither substitutes for the other: a user can be present and
+     * typing while the chase loop still has nothing to offer, which is exactly
+     * 18 September, and a user can be absent while a genuinely urgent item is
+     * due, which is exactly what the first axis is careful not to over-gate.
+     */
+    fruitless?: number;
+    /**
+     * When a self-initiated nudge was last pushed at Orbit, whether or not it
+     * produced a turn.
+     *
+     * The fruitless axis has to measure from here rather than from
+     * `lastProactiveAt`, because by construction nothing was said. Measuring a
+     * silence from the last thing spoken is measuring it from a clock that has
+     * stopped, which is precisely why the gate never closed on 18 September.
+     */
+    lastNudgeAt?: number;
 }
 
 export interface AttentionVerdict {
@@ -123,9 +178,9 @@ export interface AttentionVerdict {
  * about askings: the signal is asymmetric. Two ignored turns might be a
  * meeting. Eight is an answer.
  */
-export function requiredGapMs(unanswered: number): number {
-    if (unanswered < ATTENTION_GRACE) return 0;
-    const steps = unanswered - ATTENTION_GRACE;
+export function requiredGapMs(count: number, grace: number = ATTENTION_GRACE): number {
+    if (count < grace) return 0;
+    const steps = count - grace;
     return Math.min(QUIET_CEILING_MS, QUIET_BASE_MS * 2 ** steps);
 }
 
@@ -133,29 +188,87 @@ export function requiredGapMs(unanswered: number): number {
  * May Orbit interrupt on its own account right now?
  *
  * Called by the chase loops only. Event-driven speech does not ask.
+ *
+ * Two independent gates, and a nudge has to clear both. They are combined by
+ * taking whichever is still owed the most quiet, so adding an axis can only
+ * ever make Orbit quieter, never louder.
  */
 export function decideInterrupt(facts: AttentionFacts, now: number): AttentionVerdict {
-    const gap = requiredGapMs(facts.unanswered);
+    const spoken = gate({
+        count: facts.unanswered,
+        grace: ATTENTION_GRACE,
+        since: facts.lastProactiveAt,
+        now,
+        label: (n) => `${n} turns unanswered`,
+        clear: "he is still in the conversation",
+    });
+    const fruitless = gate({
+        count: facts.fruitless ?? 0,
+        grace: FRUITLESS_GRACE,
+        since: facts.lastNudgeAt,
+        now,
+        label: (n) => `${n} nudges in a row came to nothing`,
+        clear: "the last nudge was worth taking",
+    });
 
-    if (gap === 0) {
-        return { speak: true, because: "he is still in the conversation", requiredGapMs: 0 };
-    }
-    if (facts.lastProactiveAt === undefined) {
-        return { speak: true, because: "nothing has been said unprompted yet", requiredGapMs: gap };
-    }
-
-    const since = now - facts.lastProactiveAt;
-    if (since >= gap) {
+    const refusals = [spoken, fruitless].filter((verdict) => !verdict.speak);
+    if (refusals.length > 0) {
+        // The binding constraint is the one owing the most silence. Reporting
+        // the other would explain a hold that is not the hold in force.
+        refusals.sort((a, b) => b.owedMs - a.owedMs);
         return {
-            speak: true,
-            because: `${describeGap(gap)} of quiet has been served`,
-            requiredGapMs: gap,
+            speak: false,
+            because: refusals[0].because,
+            requiredGapMs: Math.max(spoken.requiredGapMs, fruitless.requiredGapMs),
         };
     }
+
+    const binding = spoken.requiredGapMs >= fruitless.requiredGapMs ? spoken : fruitless;
+    return {
+        speak: true,
+        because: binding.because,
+        requiredGapMs: Math.max(spoken.requiredGapMs, fruitless.requiredGapMs),
+    };
+}
+
+/** One axis of the decision, evaluated on its own terms. */
+function gate(input: {
+    count: number;
+    grace: number;
+    since: number | undefined;
+    now: number;
+    label: (count: number) => string;
+    clear: string;
+}): AttentionVerdict & { owedMs: number } {
+    const gapMs = requiredGapMs(input.count, input.grace);
+
+    if (gapMs === 0) {
+        return { speak: true, because: input.clear, requiredGapMs: 0, owedMs: 0 };
+    }
+    if (input.since === undefined) {
+        return {
+            speak: true,
+            because: "nothing has been said unprompted yet",
+            requiredGapMs: gapMs,
+            owedMs: 0,
+        };
+    }
+
+    const since = input.now - input.since;
+    if (since >= gapMs) {
+        return {
+            speak: true,
+            because: `${describeGap(gapMs)} of quiet has been served`,
+            requiredGapMs: gapMs,
+            owedMs: 0,
+        };
+    }
+    const owedMs = gapMs - since;
     return {
         speak: false,
-        because: `${facts.unanswered} turns unanswered, owing ${describeGap(gap - since)} more quiet`,
-        requiredGapMs: gap,
+        because: `${input.label(input.count)}, owing ${describeGap(owedMs)} more quiet`,
+        requiredGapMs: gapMs,
+        owedMs,
     };
 }
 
