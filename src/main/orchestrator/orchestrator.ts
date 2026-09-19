@@ -94,6 +94,7 @@ import { needsSoulStep, soulBlock, soulEntry, withSoulStep } from "./soul.js";
 import { checkDesignRevision } from "./design.js";
 import { correctMemory as applyMemoryCorrection, type MemoryCorrection } from "./memory.js";
 import { deriveBoard } from "./board.js";
+import { describeMiss, findById } from "./ids.js";
 import {
     SILENCE_AFFORDANCE,
     SILENCE_TOKEN,
@@ -179,6 +180,14 @@ export class Orchestrator {
      */
     private unansweredTurns = 0;
     private lastProactiveAt: number | undefined;
+    /**
+     * Nudges in a row that Orbit answered with the silence token, and when the
+     * last nudge went out. The second axis the chase loops throttle on: a turn
+     * that is dropped advances `unansweredTurns` by nothing, so without this a
+     * loop producing only silence never slows down. See `attention.ts`.
+     */
+    private fruitlessNudges = 0;
+    private lastNudgeAt: number | undefined;
     /** Pending staggered catch-up runs, so a shutdown can call them off. */
     private readonly catchUpTimers = new Set<NodeJS.Timeout>();
     /**
@@ -1001,7 +1010,16 @@ export class Orchestrator {
                 }),
                 handler: async ({ openItemId, resolution }) => {
                     const ok = this.resolveOpenItem(openItemId, resolution);
-                    return ok ? { ok: true } : { error: "No outstanding item with that id." };
+                    if (ok) return { ok: true };
+                    return {
+                        error: describeMiss(
+                            findById(
+                                this.store.get().openItems.filter((entry) => !entry.resolved),
+                                openItemId,
+                            ),
+                            "item",
+                        ),
+                    };
                 },
             }),
 
@@ -1419,6 +1437,8 @@ export class Orchestrator {
         // nobody is spent, and the chase loops go back to full volume.
         this.unansweredTurns = 0;
         this.lastProactiveAt = undefined;
+        this.fruitlessNudges = 0;
+        this.lastNudgeAt = undefined;
 
         const replyTo = this.resolveReplyRef(replyToId);
         const forModel = buildReplyPrompt(text, replyTo?.text);
@@ -1537,6 +1557,12 @@ export class Orchestrator {
                     this.store.flush();
                 }
                 this.logInteraction({ kind: "turn", role: "orbit", text: SILENCE_TOKEN, tools: this.takeTurnTools() });
+                // It is not a turn he ignored, so the unanswered tally is right
+                // to stay put. It is a wake-up that produced nothing, which is
+                // the loop's own business, and that has its own tally. Without
+                // this the gate can never close on a channel whose every turn
+                // is silence: 18 Sep, fourteen in a row, five minutes apart.
+                this.fruitlessNudges += 1;
                 return;
             }
             const { text: display, choices } = parseChoices(content);
@@ -1564,6 +1590,9 @@ export class Orchestrator {
             // silence. Only the chase loops consult it before speaking.
             this.unansweredTurns += 1;
             this.lastProactiveAt = Date.now();
+            // Something was worth saying, so the loops are earning their
+            // wake-ups again and the fruitless run is over.
+            this.fruitlessNudges = 0;
             this.logInteraction({ kind: "turn", role: "orbit", text: display, tools: this.takeTurnTools() });
         });
 
@@ -2086,8 +2115,20 @@ export class Orchestrator {
     }
 
     /** Hand Orbit a system-side note to react to, out of band of the user. */
-    private notifyOrbit(note: string): void {
-        if (!this.orbit) return;
+    /**
+     * A nudge Orbit sent itself, from one of the two chase loops.
+     *
+     * Distinct from `notifyOrbit` only in that it stamps the clock the fruitless
+     * gate measures from. Everything else that reaches Orbit unprompted, a
+     * finished agent, a meeting about to start, a watcher firing, is a real
+     * event rather than Orbit filling a silence, and must not be timed as one.
+     */
+    private nudgeOrbit(note: string): void {
+        this.lastNudgeAt = Date.now();
+        this.notifyOrbit(note);
+    }
+
+    private notifyOrbit(note: string): void {        if (!this.orbit) return;
         this.store.update((state) => {
             state.orbitBusy = true;
             state.orbitActivity = "catching up";
@@ -2184,6 +2225,8 @@ export class Orchestrator {
             // typed message: a timeout is not, and must not clear the tally.
             this.unansweredTurns = 0;
             this.lastProactiveAt = undefined;
+            this.fruitlessNudges = 0;
+            this.lastNudgeAt = undefined;
         }
         // A lane that still shows him as blocked a second after he unblocked it
         // reads as the board being wrong, not as the board being slow.
@@ -3205,10 +3248,14 @@ export class Orchestrator {
      * so the file cannot grow forever.
      */
     resolveOpenItem(openItemId: string, resolution?: string): boolean {
-        const existing = this.store.get().openItems.find((entry) => entry.id === openItemId);
-        if (!existing || existing.resolved) return false;
+        const found = findById(
+            this.store.get().openItems.filter((entry) => !entry.resolved),
+            openItemId,
+        );
+        if (found.status !== "ok") return false;
+        const existing = found.item;
         this.store.update((state) => {
-            const item = state.openItems.find((entry) => entry.id === openItemId);
+            const item = state.openItems.find((entry) => entry.id === existing.id);
             if (!item) return;
             item.resolved = true;
             item.resolvedAt = Date.now();
@@ -3235,8 +3282,9 @@ export class Orchestrator {
      * question this answers is "has he ever looked at this", not "when last".
      */
     markArtifactOpened(activityId: string): boolean {
-        const entry = this.activity.find((candidate) => candidate.id === activityId);
-        if (!entry) return false;
+        const found = findById(this.activity, activityId);
+        if (found.status !== "ok") return false;
+        const entry = found.item;
         if (entry.openedAt !== undefined) return true;
         entry.openedAt = Date.now();
         this.persistActivity();
@@ -3269,7 +3317,7 @@ export class Orchestrator {
             );
         });
         this.persistOpenItems();
-        this.notifyOrbit(this.openItemsBlock(due, true));
+        this.nudgeOrbit(this.openItemsBlock(due, true));
     }
 
     private persistOpenItems(): void {
@@ -3471,8 +3519,9 @@ export class Orchestrator {
         note?: string,
         waitingOn?: string,
     ): Record<string, unknown> {
-        const entry = this.activity.find((candidate) => candidate.id === activityId);
-        if (!entry) return { error: "No activity entry with that id." };
+        const found = findById(this.activity, activityId);
+        if (found.status !== "ok") return { error: describeMiss(found, "activity entry") };
+        const entry = found.item;
         if (!status && !note && waitingOn === undefined) {
             return { error: "Give a status, a note, someone to wait on, or all three." };
         }
@@ -3521,7 +3570,7 @@ export class Orchestrator {
             entry.chaseCount = (entry.chaseCount ?? 0) + 1;
         }
         this.persistActivity();
-        this.notifyOrbit(`${activityChaseBlock(due)}\n\n${SILENCE_AFFORDANCE}`);
+        this.nudgeOrbit(`${activityChaseBlock(due)}\n\n${SILENCE_AFFORDANCE}`);
     }
 
     /**
@@ -3535,7 +3584,12 @@ export class Orchestrator {
      */
     private mayInterrupt(what: string): boolean {
         const verdict = decideInterrupt(
-            { unanswered: this.unansweredTurns, lastProactiveAt: this.lastProactiveAt },
+            {
+                unanswered: this.unansweredTurns,
+                lastProactiveAt: this.lastProactiveAt,
+                fruitless: this.fruitlessNudges,
+                lastNudgeAt: this.lastNudgeAt,
+            },
             Date.now(),
         );
         if (!verdict.speak && process.env.ORBIT_DEBUG === "1") {
@@ -3778,8 +3832,9 @@ export class Orchestrator {
         status: ProposalStatus,
         details: { note?: string; branch?: string; commit?: string; supersededBy?: string } = {},
     ): Record<string, unknown> {
-        const proposal = this.proposals.find((entry) => entry.id === proposalId);
-        if (!proposal) return { error: "No proposal with that id." };
+        const found = findById(this.proposals, proposalId);
+        if (found.status !== "ok") return { error: describeMiss(found, "proposal") };
+        const proposal = found.item;
 
         proposal.status = status;
         proposal.statusChangedAt = Date.now();
