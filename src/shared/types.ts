@@ -187,6 +187,21 @@ export interface Schedule {
      */
     backoffMinutes?: number;
     /**
+     * Days between runs while a dull *daily* watcher is easing off. The daily
+     * counterpart of `backoffMinutes`, and kept separate from it because the
+     * two cadences stretch along different axes: an interval widens its gap in
+     * minutes, a daily keeps its slot and skips whole days to reach it.
+     *
+     * Absent or 1 means the watcher runs every day, as configured.
+     *
+     * This exists because for weeks a daily watcher could not ease off at all.
+     * `quietRuns` was counted for every cadence and acted on for exactly one of
+     * them, so "Tear down Bastion" — a one-off mis-encoded as a daily, whose
+     * own brief guaranteed silence on every day but 20 August — sat at ten
+     * consecutive quiet runs and still spawned an agent every morning.
+     */
+    backoffDays?: number;
+    /**
      * Retired, but kept. An archived watcher keeps its run history and its last
      * report on disk, stays out of the default list, and never runs again —
      * unlike `enabled: false`, which is a pause the user expects to undo.
