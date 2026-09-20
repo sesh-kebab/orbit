@@ -69,6 +69,20 @@ const BACKOFF_AFTER_QUIET_RUNS = 3;
 const BACKOFF_CEILING_MINUTES = 6 * 60;
 
 /**
+ * Consecutive silent runs a *daily* watcher gets before it starts skipping days.
+ *
+ * Deliberately more patient than the interval threshold. A day is already a
+ * long gap, and a weekday watcher can be legitimately quiet for a whole working
+ * week without being useless. Five says something the third would not.
+ */
+const BACKOFF_AFTER_QUIET_DAILY_RUNS = 5;
+
+/** However dull a daily watcher gets, it still checks in this often. */
+const BACKOFF_CEILING_DAYS = 7;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
  * The interval actually in force, once back-off is taken into account.
  *
  * Never faster than the configured cadence: a ceiling below what the user
@@ -80,13 +94,55 @@ export function effectiveCadence(schedule: Schedule): Cadence {
     return { kind: "interval", minutes: Math.max(cadence.minutes, backoffMinutes) };
 }
 
+/**
+ * Days this daily watcher is currently leaving between runs, or undefined when
+ * it is running at the rhythm the user asked for.
+ *
+ * Only ever reports a stretch, never a shrink: a stored value below 1 is a
+ * corrupted file or an older build, and the safe reading of both is "normal".
+ */
+export function dormantDays(schedule: Schedule): number | undefined {
+    if (schedule.cadence.kind !== "daily") return undefined;
+    const days = schedule.backoffDays ?? 1;
+    return days > 1 ? Math.min(days, BACKOFF_CEILING_DAYS) : undefined;
+}
+
+/**
+ * Push a candidate fire time out to respect a dormant daily watcher.
+ *
+ * Works from the last run rather than from `now` so that the gap it enforces is
+ * the gap between two *runs*. Computing it from the moment of asking would let
+ * any incidental recalculation — a leave edit, a suppression check, an enable
+ * toggle — silently restart the clock and hand back a watcher that never
+ * actually eases off.
+ *
+ * The target day is reached with `setDate` and the slot re-derived from the
+ * cadence, so a stretch that crosses a daylight-saving boundary still lands on
+ * the wall-clock time the user asked for rather than an hour either side.
+ *
+ * Can only ever delay. `Math.max` against the candidate means a watcher whose
+ * next slot is already further out than its dormancy keeps the later of the two.
+ */
+function withDailyDormancy(schedule: Schedule, candidate: number): number {
+    const days = dormantDays(schedule);
+    if (days === undefined) return candidate;
+    const last = schedule.lastRunAt;
+    if (last === undefined) return candidate;
+
+    const target = new Date(last);
+    target.setDate(target.getDate() + days);
+    const slot = dailySlotOn(schedule.cadence, target.getTime());
+    return slot === undefined ? candidate : Math.max(candidate, slot);
+}
+
 /** Next fire time for a schedule, respecting any back-off it has earned. */
 export function nextRunFor(schedule: Schedule, from = Date.now()): number {
-    return nextRun(effectiveCadence(schedule), from);
+    return withDailyDormancy(schedule, nextRun(effectiveCadence(schedule), from));
 }
 
 /** Is this watcher currently running slower than the user asked for? */
 export function isBackedOff(schedule: Schedule): boolean {
+    if (dormantDays(schedule) !== undefined) return true;
     return (
         schedule.cadence.kind === "interval" &&
         (schedule.backoffMinutes ?? 0) > schedule.cadence.minutes
@@ -173,25 +229,42 @@ export function catchUpDecision(
     }
 
     const slot = dailySlotOn(schedule.cadence, now)!;
-    const day = 24 * 60 * 60 * 1000;
 
     // Slot still ahead of us today: nothing was missed, just wait for it.
     if (slot > now) return { run: false, nextRunAt: slot, slotAt: slot };
 
     const missedBy = now - slot;
-    const run = missedBy < CATCH_UP_GRACE_MS && !ranSlot(schedule, slot);
-    // Having run (or given up on) today's slot, the next one is tomorrow's.
-    return { run, nextRunAt: slot + day, slotAt: slot };
+    // A dormant daily must not be woken by a slot it was never due to serve.
+    // Without this, every tick past today's slot would see an unserved slot and
+    // fire, which is precisely the daily run the dormancy exists to skip.
+    const run = dormancyAllows(schedule, slot) && missedBy < CATCH_UP_GRACE_MS && !ranSlot(schedule, slot);
+    // Having run (or given up on) today's slot, the next one is tomorrow's —
+    // or later still, if the watcher has earned a stretch.
+    return { run, nextRunAt: withDailyDormancy(schedule, slot + DAY_MS), slotAt: slot };
+}
+
+/**
+ * Does this watcher's dormancy allow it to serve the daily slot at `slotAt`?
+ *
+ * Always true for a watcher running at its configured rhythm, so callers can
+ * ask unconditionally.
+ */
+export function dormancyAllows(schedule: Schedule, slotAt: number): boolean {
+    return withDailyDormancy(schedule, slotAt) <= slotAt;
 }
 
 /** Cadence for display, with the back-off and any silence rules called out. */
 export function describeSchedule(schedule: Schedule): string {
     const configured = describeCadence(schedule.cadence);
+    const quiet = schedule.quietRuns ?? 0;
+    const days = dormantDays(schedule);
     const base = !isBackedOff(schedule)
         ? configured
-        : `${configured}, backed off to ${describeCadence(effectiveCadence(schedule))} after ${
-              schedule.quietRuns ?? 0
-          } quiet runs`;
+        : days !== undefined
+          ? `${configured}, eased off to every ${days} days after ${quiet} quiet runs`
+          : `${configured}, backed off to ${describeCadence(
+                effectiveCadence(schedule),
+            )} after ${quiet} quiet runs`;
     const silence = describeSuppression(schedule);
     return silence ? `${base} (${silence})` : base;
 }
@@ -306,16 +379,29 @@ function undress(result: string | undefined): string | undefined {
 
 /**
  * Record a run that found nothing worth saying. A watcher that keeps coming
- * back empty doubles its gap rather than burning tokens forever at a cadence
- * the user picked before they knew how noisy the thing would be.
+ * back empty eases off rather than burning tokens forever at a cadence the user
+ * picked before they knew how noisy the thing would be.
  *
- * Only interval watchers back off — a daily brief at 08:30 is wanted at 08:30
- * whether or not yesterday was quiet, and a one-off never runs twice.
+ * Interval watchers double their gap in minutes. Daily watchers keep their slot
+ * and start skipping days, because a briefing due at 08:00 is wanted at 08:00
+ * on whichever day it lands on, not at 08:00 plus a drift.
  *
- * Returns true when the effective interval actually moved.
+ * A one-off never runs twice, so it has nothing to ease off from.
+ *
+ * Returns true when the effective rhythm actually moved.
  */
 export function noteQuietRun(schedule: Schedule): boolean {
     schedule.quietRuns = (schedule.quietRuns ?? 0) + 1;
+
+    if (schedule.cadence.kind === "daily") {
+        if (schedule.quietRuns < BACKOFF_AFTER_QUIET_DAILY_RUNS) return false;
+        const current = schedule.backoffDays ?? 1;
+        const widened = Math.min(BACKOFF_CEILING_DAYS, current * 2);
+        if (widened <= current) return false;
+        schedule.backoffDays = widened;
+        return true;
+    }
+
     if (schedule.cadence.kind !== "interval") return false;
     if (schedule.quietRuns < BACKOFF_AFTER_QUIET_RUNS) return false;
 
@@ -334,9 +420,13 @@ export function noteQuietRun(schedule: Schedule): boolean {
  * Returns true when something was undone.
  */
 export function clearBackoff(schedule: Schedule): boolean {
-    const changed = (schedule.quietRuns ?? 0) > 0 || schedule.backoffMinutes !== undefined;
+    const changed =
+        (schedule.quietRuns ?? 0) > 0 ||
+        schedule.backoffMinutes !== undefined ||
+        schedule.backoffDays !== undefined;
     schedule.quietRuns = 0;
     schedule.backoffMinutes = undefined;
+    schedule.backoffDays = undefined;
     return changed;
 }
 

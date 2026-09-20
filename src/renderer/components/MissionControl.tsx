@@ -418,7 +418,13 @@ function cadenceLabel(schedule: Schedule): string {
             ? `${label} · easing off to ${intervalLabel(backoff)}`
             : label;
     }
-    if (cadence.kind === "daily") return `daily at ${cadence.time}`;
+    if (cadence.kind === "daily") {
+        const label = `daily at ${cadence.time}`;
+        // Same idea as an interval's leash, measured in days: the slot the user
+        // picked is kept, the watcher just skips days until it has news.
+        const days = schedule.backoffDays ?? 1;
+        return days > 1 ? `${label} · easing off to every ${days} days` : label;
+    }
     if (hasFired(schedule)) return "one-off, fired";
     return schedule.enabled ? `in ${elapsedLabel(Date.now(), cadence.at)}` : "one-off";
 }

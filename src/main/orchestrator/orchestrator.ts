@@ -116,6 +116,7 @@ import {
     blindReason,
     describeCadence,
     describeSchedule,
+    dormancyAllows,
     isArchived,
     isBackedOff,
     isCouldNotCheck,
@@ -2026,7 +2027,10 @@ export class Orchestrator {
                 }
 
                 const rescheduled = nothingToReport ? noteQuietRun(target) : clearBackoff(target);
-                if ((rescheduled || recovered) && isRunnable(target) && target.cadence.kind === "interval") {
+                // Daily watchers are included: their `nextRunAt` was set when
+                // the agent was spawned, before this report existed, so a
+                // stretch earned by this very run only takes effect here.
+                if ((rescheduled || recovered) && isRunnable(target)) {
                     target.nextRunAt = nextAllowedRunFor(target, state.leave);
                 }
             });
@@ -2580,7 +2584,14 @@ export class Orchestrator {
                 // — a stale `nextRunAt`, or a run that got there first. Roll on
                 // without firing. Note this asks about the *slot*, not the day:
                 // a manual run this morning must not eat tonight's scheduled one.
-                if (slot === undefined || slot > now || ranSlot(schedule, slot)) {
+                // A watcher easing off after a run of silent days rolls on here
+                // too: the slot exists, it is simply not this watcher's turn.
+                if (
+                    slot === undefined ||
+                    slot > now ||
+                    ranSlot(schedule, slot) ||
+                    !dormancyAllows(schedule, slot)
+                ) {
                     this.store.update((state) => {
                         const target = state.schedules.find((s) => s.id === schedule.id);
                         if (target) target.nextRunAt = decision.nextRunAt;
