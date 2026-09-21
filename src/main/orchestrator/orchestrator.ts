@@ -130,6 +130,7 @@ import {
     noteQuietRun,
     previousRunBlock,
     ranSlot,
+    retirementCase,
 } from "./schedules.js";
 import { describeSync, shouldAutoSync, syncWorkspace, workspaceRepoPath } from "../workspace.js";
 import {
@@ -840,6 +841,66 @@ export class Orchestrator {
                             lastResult: schedule.lastResult ? clip(schedule.lastResult, 200) : undefined,
                         })),
                 }),
+            }),
+
+            defineTool("orbit_archive_schedule", {
+                description:
+                    "Retire a watcher that has stopped being worth running. It keeps its run history and its last report, drops out of the list and never runs again; the user can bring it back. Only works on a watcher that has earned it: one that already fired, one already paused, or one that has come back with nothing several runs running. A watcher still reporting real news is refused, so file an open item for the user instead.",
+                skipPermission: true,
+                parameters: z.object({
+                    scheduleId: z.string().describe("From orbit_list_schedules."),
+                    reason: z
+                        .string()
+                        .describe(
+                            "Why it is being retired, in one sentence, for the record. Say what evidence made it dead, not just that it was quiet.",
+                        ),
+                }),
+                handler: async ({ scheduleId, reason }) => {
+                    const target = this.store.get().schedules.find((s) => s.id === scheduleId);
+                    if (!target) return { error: "No watcher with that id." };
+
+                    // The guard, not a formality: this tool is the one thing in
+                    // the agent allowlist that changes what Orbit runs, and the
+                    // predicate is what keeps it from being a way to switch off
+                    // a watcher that is doing its job.
+                    const verdict = retirementCase(target);
+                    if (!verdict.retirable) {
+                        return {
+                            error: `Not retiring "${target.title}" because ${verdict.because}.`,
+                            hint: "Raise it with orbit_raise_open_item and let the user decide.",
+                        };
+                    }
+
+                    this.store.update((state) => {
+                        const schedule = state.schedules.find((s) => s.id === scheduleId);
+                        if (!schedule) return;
+                        schedule.archived = true;
+                        schedule.archivedAt = Date.now();
+                        schedule.archivedReason = reason;
+                    });
+                    this.persistSchedules();
+
+                    const updated = this.store.get().schedules.find((s) => s.id === scheduleId);
+                    if (!updated) return { error: "No watcher with that id." };
+                    this.log({
+                        kind: "schedule.updated",
+                        title: updated.title,
+                        detail: `archived: ${reason}`,
+                        scheduleId: updated.id,
+                    });
+                    this.store.flush();
+
+                    return {
+                        scheduleId: updated.id,
+                        title: updated.title,
+                        archived: true,
+                        because: verdict.because,
+                        reason,
+                        runCount: updated.runCount,
+                        quietRuns: updated.quietRuns ?? 0,
+                        lastResult: updated.lastResult ? clip(updated.lastResult, 200) : undefined,
+                    };
+                },
             }),
 
             defineTool("orbit_update_schedule", {

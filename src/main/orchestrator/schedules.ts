@@ -162,6 +162,71 @@ export function hasFired(schedule: Schedule): boolean {
     return schedule.cadence.kind === "once" && schedule.runCount > 0;
 }
 
+/**
+ * How many runs running a watcher must find nothing before a background job is
+ * allowed to retire it outright rather than merely slow it down.
+ *
+ * Higher than the back-off threshold on purpose. Easing off is reversible by
+ * the watcher itself: one interesting run and it snaps back. Retiring is not,
+ * short of the user going and finding it, so it asks for more evidence.
+ */
+export const RETIRE_AFTER_QUIET_RUNS = 6;
+
+/** Whether a watcher may be retired by something other than the user, and why. */
+export interface RetirementCase {
+    retirable: boolean;
+    /** Reads after "because ...", for the record and for the refusal message. */
+    because: string;
+}
+
+/**
+ * May a background job retire this watcher?
+ *
+ * The nightly reflection could see dead watchers for weeks and do nothing about
+ * them. "Tear down Bastion" is the case that forced this: a one-off mis-encoded
+ * as a daily, whose own brief says it should only ever run on 20 August 2026, and
+ * which then spawned an agent every morning for a month to say nothing. It took
+ * a decision to the user seven days running and the decision was never a
+ * decision, it was a chore nothing could perform.
+ *
+ * The rule is that a watcher must have earned it. Three ways to earn it:
+ *
+ *  - it is a one-off that already fired, so it has no future runs to lose
+ *  - it is already paused, so retiring it changes nothing that runs today
+ *  - it has come back with nothing `RETIRE_AFTER_QUIET_RUNS` times running
+ *
+ * and one way not to: it is still saying things. A watcher reporting real news
+ * cannot be switched off by a background job however tidy that would be, which
+ * is the whole reason this is a predicate and not a flag on the tool call.
+ *
+ * Note what does *not* earn it: blind runs. A watcher that cannot look is not a
+ * watcher with nothing to say, `noteBlindRun` deliberately leaves `quietRuns`
+ * alone, and so a watcher broken by a signed-out account stays exactly where it
+ * is instead of being quietly buried by the process that should be surfacing it.
+ */
+export function retirementCase(schedule: Schedule): RetirementCase {
+    if (isArchived(schedule)) return { retirable: false, because: "it is already retired" };
+    if (hasFired(schedule)) return { retirable: true, because: "it is a one-off that has already fired" };
+    if (!schedule.enabled) return { retirable: true, because: "it is already paused" };
+
+    const quiet = schedule.quietRuns ?? 0;
+    if (quiet >= RETIRE_AFTER_QUIET_RUNS) {
+        return { retirable: true, because: `it has found nothing ${quiet} runs running` };
+    }
+
+    const blind = schedule.blindRuns ?? 0;
+    if (blind > 0) {
+        return {
+            retirable: false,
+            because: `it has not been able to look for ${blind} runs, which is a fault to report rather than a watcher to bury`,
+        };
+    }
+    return {
+        retirable: false,
+        because: `it is still finding things: ${quiet} quiet ${quiet === 1 ? "run" : "runs"}, and ${RETIRE_AFTER_QUIET_RUNS} running are needed`,
+    };
+}
+
 /** Watchers the clock is allowed to fire. */
 export function isRunnable(schedule: Schedule): boolean {
     return schedule.enabled && !isArchived(schedule) && !hasFired(schedule);
