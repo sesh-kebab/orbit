@@ -211,6 +211,16 @@ export interface Schedule {
     /** When it was archived, by hand or automatically after a one-off fired. */
     archivedAt?: number;
     /**
+     * Why it was retired, when something other than the user retired it.
+     *
+     * A watcher the user archives by hand needs no explanation: they were there.
+     * One the nightly reflection retires does, because the next person to ask
+     * "where did that go?" is reading the record months later with no memory of
+     * the run that did it. Absent on watchers retired by hand and on every
+     * watcher archived before this existed.
+     */
+    archivedReason?: string;
+    /**
      * Days this watcher is allowed to run, `0` Sunday through `6` Saturday.
      * Absent means every day.
      *

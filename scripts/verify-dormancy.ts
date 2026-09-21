@@ -30,6 +30,8 @@ import {
     makeSchedule,
     nextRunFor,
     noteQuietRun,
+    retirementCase,
+    RETIRE_AFTER_QUIET_RUNS,
 } from "../src/main/orchestrator/schedules.js";
 import type { Schedule } from "../src/shared/types.js";
 
@@ -211,6 +213,65 @@ check("and three silent runs take it to weekly", bastion.backoffDays === 7);
 check(
     "which is 52 agent runs a year rather than 365",
     nextRunFor(bastion, at(2026, 9, 19, 10, 1)) === at(2026, 9, 26, 10),
+);
+
+console.log("\nRetiring a watcher rather than only slowing it down");
+
+// Easing off is what a watcher does to itself. Retiring is what something else
+// does to it, so the bar is higher and the refusals are the important half.
+
+const stillWorking = daily("08:00", at(2026, 9, 19, 8));
+stillWorking.quietRuns = 0;
+check("a watcher that is still finding things cannot be retired", !retirementCase(stillWorking).retirable);
+check(
+    "and the refusal says what it would take",
+    retirementCase(stillWorking).because.includes(String(RETIRE_AFTER_QUIET_RUNS)),
+);
+
+const easingOff = daily("10:00", at(2026, 9, 19, 10));
+for (let i = 0; i < 5; i += 1) noteQuietRun(easingOff);
+check("the back-off threshold alone does not earn retirement", isBackedOff(easingOff));
+check("five quiet runs is still not enough to retire", !retirementCase(easingOff).retirable);
+check("retiring asks for more evidence than easing off does", RETIRE_AFTER_QUIET_RUNS > 5);
+
+noteQuietRun(easingOff);
+check("the sixth quiet run earns it", retirementCase(easingOff).retirable);
+check("and the record says how it was earned", retirementCase(easingOff).because.includes("6 runs running"));
+
+// A watcher that cannot look is broken, not dull. Burying it would hide the
+// fault, so `noteBlindRun` leaves `quietRuns` alone and this must refuse.
+const blind = daily("10:00", at(2026, 9, 19, 10));
+blind.quietRuns = 0;
+blind.blindRuns = 30;
+check("a blind watcher is never retired, however long it has been blind", !retirementCase(blind).retirable);
+check("and it is named as a fault to report", retirementCase(blind).because.includes("fault"));
+
+const paused = daily("10:00", at(2026, 9, 19, 10));
+paused.enabled = false;
+check("a paused watcher can be tidied away", retirementCase(paused).retirable);
+
+const oneOff = makeSchedule({
+    title: "Remind me once",
+    task: "Say the thing.",
+    cadence: { kind: "once", at: at(2026, 9, 1, 9) },
+});
+oneOff.runCount = 1;
+check("a one-off that already fired can be retired", retirementCase(oneOff).retirable);
+
+const alreadyGone = daily("10:00", at(2026, 9, 19, 10));
+alreadyGone.quietRuns = 40;
+alreadyGone.archived = true;
+check("an already-retired watcher is not retired twice", !retirementCase(alreadyGone).retirable);
+
+// The case this was built for. Bastion's own brief expired on 20 August; by
+// tonight it stood at eleven consecutive silent runs out of nineteen.
+const deadBastion = daily("10:00", at(2026, 9, 20, 10));
+deadBastion.runCount = 19;
+deadBastion.quietRuns = 11;
+check("Bastion, as it stands tonight, can finally be retired", retirementCase(deadBastion).retirable);
+check(
+    "which is the seven-day-old open item nothing could act on",
+    retirementCase(deadBastion).because === "it has found nothing 11 runs running",
 );
 
 if (failures > 0) {

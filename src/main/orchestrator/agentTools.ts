@@ -13,10 +13,14 @@
  * The fix is not to make agents omnipotent. An agent is a worker: it should be
  * able to record what it found and what it did, and read enough of Orbit's
  * state to avoid repeating itself. It should not be able to spawn more agents,
- * restart the app, rewrite schedules or declare the user on leave. So the set
- * below is an allowlist of bookkeeping and read tools, and `FORBIDDEN` is the
- * rule that keeps it one: the control-plane tools are named explicitly and an
- * invariant asserts none of them ever drifts into the allowlist.
+ * restart the app, rewrite what a watcher does or declare the user on leave. So
+ * the set below is an allowlist of bookkeeping and read tools, and `FORBIDDEN`
+ * is the rule that keeps it one: the control-plane tools are named explicitly
+ * and an invariant asserts none of them ever drifts into the allowlist.
+ *
+ * One tool, `orbit_archive_schedule`, does change what runs, and is allowed
+ * anyway because it can only ever stop a watcher that has already proved it has
+ * nothing to say. Its own comment below argues the case.
  */
 
 /** Bookkeeping and read tools an agent may call. */
@@ -45,6 +49,26 @@ export const AGENT_TOOL_NAMES: readonly string[] = [
     // Read-only context.
     "orbit_list_schedules",
     "orbit_list_leave",
+    // Retiring a dead watcher, and only a dead one.
+    //
+    // This is the one tool in the allowlist that changes what Orbit runs, so it
+    // is worth saying why it is not a hole in the rule above. The rule exists to
+    // stop an agent rewriting what a watcher does, silently, in a way nobody
+    // sees until the wrong thing gets said to the user. `orbit_update_schedule`
+    // can do exactly that and stays forbidden. This one cannot: it has no way to
+    // touch a brief, a cadence or a title, it moves in one direction only, and
+    // what it does is reversible with the history intact.
+    //
+    // It is here because the alternative was worse. For six days the nightly
+    // reflection could see that "Tear down Bastion" was a one-off whose own
+    // brief had expired on 20 August, and all it could do was ask the user to go
+    // and switch it off. He did not, because it is a chore and not a decision,
+    // and the watcher spawned an agent every morning meanwhile. An assistant
+    // that can only file tickets about its own waste is not doing the job.
+    //
+    // The safety is `retirementCase`, not the allowlist: a watcher that is still
+    // finding things is refused however it is asked. See `schedules.ts`.
+    "orbit_archive_schedule",
     // Orbit's own operating notes. An agent may read them and read their
     // history, which is how the nightly reflection can tell whether a
     // correction it is about to write down is already written down. Revising

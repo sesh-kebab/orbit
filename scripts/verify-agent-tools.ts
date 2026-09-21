@@ -102,6 +102,36 @@ for (const name of [
     ok(`${name} is withheld from agents`, !allowed.has(name));
 }
 
+// MARK: - Retiring a watcher
+
+// The one allowlisted tool that changes what Orbit runs. It is allowed because
+// it can only stop a dead watcher, so these checks are about the difference
+// between it and the tool that stays forbidden, not about it being present.
+ok("an agent can retire a watcher", allowed.has("orbit_archive_schedule"));
+ok(
+    "retiring is a separate tool from amending, so the narrow one can be granted alone",
+    allowed.has("orbit_archive_schedule") && !allowed.has("orbit_update_schedule"),
+);
+
+const archiveStart = orchestrator.indexOf('defineTool("orbit_archive_schedule"');
+const archiveEnd = orchestrator.indexOf('defineTool("orbit_update_schedule"', archiveStart);
+ok("the retire tool exists in the orchestrator", archiveStart > 0 && archiveEnd > archiveStart);
+const archiveBody = orchestrator.slice(archiveStart, archiveEnd);
+
+ok("retiring demands a reason for the record", /reason:\s*z[\s\S]{0,40}\.string\(\)/.test(archiveBody));
+ok("retiring is gated on retirementCase", /retirementCase\(target\)/.test(archiveBody));
+ok("a watcher that has not earned it is refused", /if\s*\(!verdict\.retirable\)/.test(archiveBody));
+ok("the refusal points at the open-items route", /orbit_raise_open_item/.test(archiveBody));
+ok("the reason is persisted", /archivedReason\s*=\s*reason/.test(archiveBody));
+
+// The direction matters: this tool must not be a way to switch a watcher back
+// on, which is the control-plane half of archiving.
+ok("retiring only ever archives", !/archived\s*=\s*false/.test(archiveBody));
+// Nor a way to smuggle in the edits `orbit_update_schedule` is withheld for.
+for (const field of ["task", "title", "cadence", "enabled", "runDays"]) {
+    ok(`retiring cannot change ${field}`, !new RegExp(`schedule\\.${field}\\s*=[^=]`).test(archiveBody));
+}
+
 // The four tools the nightly reflection cannot do its job without. These are
 // the regression: it was asked to review proposals and file decisions and had
 // no way to do either.
