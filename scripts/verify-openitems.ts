@@ -14,6 +14,7 @@
 import {
     FIRST_RERAISE_MS,
     OPEN_ITEM_CAP,
+    OPEN_ITEM_GUIDANCE,
     RERAISE_BATCH,
     RERAISE_CEILING_MS,
     byNeglect,
@@ -268,6 +269,40 @@ check(
     "the label stays short enough for one line",
     describeChasing({ ...fresh, timesRaised: 9 }).length < 60,
 );
+
+// MARK: - Provenance
+//
+// On 21 Sep Orbit raised an item as a bare question and Seshi replied "where
+// did that question come from? I thought we answered that question already
+// right?". It had been settled off-system. The origin was in the prompt the
+// whole time; nothing told Orbit to say it.
+
+check(
+    "the guidance tells Orbit to say where a decision came from",
+    /where and when it came from/i.test(OPEN_ITEM_GUIDANCE),
+);
+check(
+    "it says why, so the rule survives a rewrite of the wording",
+    /non sequitur/i.test(OPEN_ITEM_GUIDANCE),
+);
+check(
+    "it still tells Orbit to close what gets answered",
+    OPEN_ITEM_GUIDANCE.includes("orbit_resolve_open_item"),
+);
+check(
+    "and to take him at his word when he says it is already settled",
+    /already settled, believe him and close it/i.test(OPEN_ITEM_GUIDANCE),
+);
+check(
+    "it still asks for one at a time rather than a backlog dump",
+    /rather than all of them at once/i.test(OPEN_ITEM_GUIDANCE),
+);
+check(
+    "the guidance stays short enough not to crowd the items themselves",
+    OPEN_ITEM_GUIDANCE.length < 600,
+    OPEN_ITEM_GUIDANCE.length,
+);
+check("no em-dashes, which Seshi has asked Orbit to drop everywhere", !OPEN_ITEM_GUIDANCE.includes("—"));
 
 // MARK: - Report
 
