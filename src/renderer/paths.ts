@@ -16,20 +16,75 @@ export interface TextSegment {
     text: string;
     /** Set when this segment is a path candidate. */
     path?: string;
+    /**
+     * The other readings of the same run, when a bare path might have absorbed
+     * the words after it. Longest first, `path` excluded. Only main can tell
+     * which one is real, so all of them are offered for checking.
+     */
+    options?: string[];
     /** Set when this segment is an http(s) link. */
     url?: string;
 }
 
 /**
- * Bare paths run to the first whitespace, which is the only rule that works
- * without a filesystem: "the file /tmp/a b.txt exists" is genuinely ambiguous.
- * A path with spaces is still reachable — write it in backticks or quotes,
- * which is what anything emitting such a path should be doing anyway.
+ * Bare paths run to the first whitespace, and then keep going: see
+ * `growCandidates`. The regex itself stops at whitespace because that is the
+ * only rule expressible without a filesystem, and the extension past it is done
+ * by hand so that every reading can be offered to main at once.
  *
  * The lookbehind keeps `and/or` and `http://x` out: a bare path has to start at
  * something that is not already part of a word or a URL scheme.
  */
 const BARE = String.raw`(?<![\w~/:.-])(?:~|/)[^\s'"\`<>|*?]+`;
+
+/** The characters a single unquoted word of a path may be made of. */
+const WORD = /[^\s'"`<>|*?]+/y;
+
+/**
+ * How many space-separated words a bare path may absorb.
+ *
+ * A cap rather than "to the end of the line" because every reading costs main a
+ * `stat`, and because a path fifteen words long is not a path, it is a
+ * paragraph. Eight covers every deliverable Orbit writes: the longest so far,
+ * "2026-09-21 Adversarial review - Sachin PR.html", is six.
+ */
+const MAX_PATH_WORDS = 8;
+
+/**
+ * Every reading of a bare path that starts at `start`, longest first.
+ *
+ * This exists because Orbit names its own deliverables with spaces in them.
+ * "2026-09-21 Big Rocks, Week of 21 Sep.html" is the house style, and under the
+ * old stop-at-whitespace rule the candidate handed to main was
+ * ".../files/2026-09-21" — a path that has never existed. It failed the
+ * existence check, so it rendered as plain text, so the file Seshi had just
+ * asked for arrived as something he could not click. He reported it on 21 Sep
+ * after an agent's review landed that way.
+ *
+ * Guessing greedily is safe here only because of the architecture: nothing
+ * becomes a chip until main has confirmed it resolves. So the renderer may
+ * propose "/tmp/a exists and is fine" freely; main answers no, the shorter
+ * reading wins, and the surplus words render as the prose they are. The cost of
+ * a wrong guess is one `stat`, and the cost of not guessing is an unopenable
+ * deliverable.
+ */
+function growCandidates(text: string, start: number, whole: string): { raw: string; end: number }[] {
+    const runs = [{ raw: whole, end: start + whole.length }];
+    let cursor = start + whole.length;
+
+    for (let word = 0; word < MAX_PATH_WORDS; word += 1) {
+        // A single space only. A newline, a tab or a double space is a gap
+        // between thoughts rather than a gap inside a filename.
+        if (text[cursor] !== " " || text[cursor + 1] === " ") break;
+        WORD.lastIndex = cursor + 1;
+        const next = WORD.exec(text);
+        if (!next || next[0].length === 0) break;
+        cursor = WORD.lastIndex;
+        runs.push({ raw: text.slice(start, cursor), end: cursor });
+    }
+
+    return runs.reverse();
+}
 const QUOTED = String.raw`\`([^\`\n]+)\`|"((?:~|/)[^"\n]+)"|'((?:~|/)[^'\n]+)'`;
 
 /**
@@ -74,13 +129,20 @@ const TRAILING = /[.,;:!?)\]}>]+$/;
  * Quoted and backticked spans keep their delimiters in the rendered text — a
  * message should read the way its author wrote it — while the candidate handed
  * onwards is the unquoted inside.
+ *
+ * `exists` is how the two passes differ. Without it this is the gathering pass:
+ * every reading of a bare path is reported, for main to check in one batch.
+ * With it this is the render pass: the longest reading main confirmed wins, and
+ * the words it did not claim fall back to prose.
  */
-export function splitPathSegments(text: string): TextSegment[] {
+export function splitPathSegments(text: string, exists?: (path: string) => boolean): TextSegment[] {
     const segments: TextSegment[] = [];
     let cursor = 0;
 
     for (const match of text.matchAll(CANDIDATE)) {
         const start = match.index ?? 0;
+        // A greedy run may have swallowed the start of this match already.
+        if (start < cursor) continue;
         const whole = match[0];
         const bare = match[5] !== undefined;
         const link = match[1] !== undefined;
@@ -104,11 +166,28 @@ export function splitPathSegments(text: string): TextSegment[] {
             const tail = whole.slice(shown.length);
             if (tail) segments.push({ text: tail });
         } else if (candidate && bare) {
+            const readings = growCandidates(text, start, whole)
+                .map((run) => ({ ...run, path: cleanCandidate(run.raw) }))
+                .filter((run): run is { raw: string; end: number; path: string } => run.path !== undefined);
+            // Longest first, so the first confirmed reading is the best one. With
+            // nothing confirmed the shortest wins: it is the only reading the old
+            // stop-at-whitespace rule would have produced, so an unverified
+            // render never looks worse than it used to.
+            const chosen = exists
+                ? (readings.find((run) => exists(run.path)) ?? readings[readings.length - 1])
+                : readings[readings.length - 1];
+            if (!chosen) continue;
             // A trailing full stop belongs to the sentence, not the filename,
             // so it is put back as plain text rather than made clickable.
-            segments.push({ text: candidate, path: candidate });
-            const tail = whole.slice(candidate.length);
+            segments.push({
+                text: chosen.path,
+                path: chosen.path,
+                options: readings.map((run) => run.path).filter((path) => path !== chosen.path),
+            });
+            const tail = text.slice(start + chosen.path.length, chosen.end);
             if (tail) segments.push({ text: tail });
+            cursor = chosen.end;
+            continue;
         } else {
             segments.push({ text: whole, path: candidate });
         }
@@ -121,9 +200,9 @@ export function splitPathSegments(text: string): TextSegment[] {
 
 /** Every distinct candidate in a message, for one batched lookup in main. */
 export function pathCandidates(text: string): string[] {
-    const found = splitPathSegments(text)
-        .map((segment) => segment.path)
-        .filter((path): path is string => path !== undefined);
+    const found = splitPathSegments(text).flatMap((segment) =>
+        segment.path ? [segment.path, ...(segment.options ?? [])] : [],
+    );
     return [...new Set(found)];
 }
 

@@ -124,7 +124,7 @@ export function RichText({ text, live = true }: { text: string; live?: boolean }
 
 /** Text with no markdown in it: paths and links only, as before. */
 function PlainRun({ text, known }: { text: string; known: Map<string, PathInfo> }): React.JSX.Element {
-    const segments = splitPathSegments(text);
+    const segments = splitPathSegments(text, (path) => known.get(path)?.exists === true);
     if (!segments.some((segment) => segment.path || segment.url)) return <>{text}</>;
 
     return (
