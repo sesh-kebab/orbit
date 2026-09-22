@@ -103,6 +103,7 @@ import {
 } from "./attention.js";
 import {
     OPEN_ITEM_CAP,
+    OPEN_ITEM_GUIDANCE,
     describeChasing,
     noteRaised,
     selectForReRaise,
@@ -3273,9 +3274,7 @@ export class Orchestrator {
             "Decisions you have asked for and not yet received. They are yours to chase:",
             lines,
             "",
-            "Raise the most pressing one when it is a sensible moment — one line, with quick",
-            "replies — rather than all of them at once. Call orbit_resolve_open_item as soon as",
-            "the user answers, declines, or the question stops mattering.",
+            OPEN_ITEM_GUIDANCE,
             ...(asNudge ? ["", SILENCE_AFFORDANCE] : []),
             "</open_items>",
         ].join("\n");

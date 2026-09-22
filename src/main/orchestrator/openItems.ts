@@ -159,3 +159,34 @@ export function describeChasing(item: OpenItem): string {
     }
     return `asked ${askings} times`;
 }
+
+/**
+ * What to do with the decisions quoted above.
+ *
+ * The provenance rule is here because of an exchange on 21 September. Orbit
+ * raised the Fresno session-string question as a bare question, and Seshi came
+ * back with "where did that question come from? I thought we answered that
+ * question already right?". He was right: it had been settled off-system, and
+ * the item was closed a turn later.
+ *
+ * Both turns were avoidable. The block above already carries where each item
+ * came from and how long it has sat, because `openItemsBlock` puts it there;
+ * Orbit simply had no instruction to repeat it, so it asked the question naked
+ * and made him do the archaeology. A decision filed by an agent six days ago is
+ * unrecognisable without its origin, and an unrecognisable question reads as a
+ * non sequitur rather than as a chase. Saying "from the 11 Sep wrap-up" costs
+ * six words and is the whole difference between him answering and him asking
+ * what this is.
+ *
+ * It matters most for exactly the items back-off has stretched furthest, which
+ * are the oldest and the least recognisable, so the rule is unconditional
+ * rather than reserved for items over some age.
+ */
+export const OPEN_ITEM_GUIDANCE = [
+    "Raise the most pressing one when it is a sensible moment: one line, with quick",
+    "replies, rather than all of them at once. Say where and when it came from in the",
+    "same line. These were filed days ago, often by an agent he never saw, and a",
+    "question he cannot place reads as a non sequitur rather than as a chase. If he",
+    "says it is already settled, believe him and close it. Call orbit_resolve_open_item",
+    "as soon as the user answers, declines, or the question stops mattering.",
+].join("\n");
