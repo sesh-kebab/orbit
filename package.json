@@ -61,7 +61,8 @@
         "verify:mcp-health": "esbuild scripts/verify-mcp-health.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-mcp-health.mjs --log-level=warning && node node_modules/.cache/verify-mcp-health.mjs",
         "verify:attention": "esbuild scripts/verify-attention.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-attention.mjs --log-level=warning && node node_modules/.cache/verify-attention.mjs",
         "verify:ids": "esbuild scripts/verify-ids.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-ids.mjs --log-level=warning && node node_modules/.cache/verify-ids.mjs",
-        "verify:dormancy": "esbuild scripts/verify-dormancy.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-dormancy.mjs --log-level=warning && node node_modules/.cache/verify-dormancy.mjs"
+        "verify:dormancy": "esbuild scripts/verify-dormancy.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-dormancy.mjs --log-level=warning && node node_modules/.cache/verify-dormancy.mjs",
+        "verify:paths": "esbuild scripts/verify-paths.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-paths.mjs --log-level=warning && node node_modules/.cache/verify-paths.mjs"
     },
     "dependencies": {
         "@github/copilot-sdk": "^1.0.8",
