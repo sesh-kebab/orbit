@@ -144,6 +144,7 @@ import {
     suppressionAt,
 } from "./suppression.js";
 import { FRESHNESS_TAG, decideAutoRestart, decideFreshnessAction } from "../freshness.js";
+import { checkoutBlock, taskTouchesCode, type CheckoutFacts } from "./checkout.js";
 import type { Freshness } from "../freshness.js";
 
 /** Distinguishes 'not installed' from a runtime that started and then failed. */
@@ -269,6 +270,12 @@ export class Orchestrator {
      * a build that lands under a running process is actually noticed.
      */
     freshnessProbe: (() => Freshness | undefined) | undefined;
+    /**
+     * Where the running process was loaded from, and what sits beside it.
+     * Supplied by the main process for the same reason as the two above: it is
+     * the only part that knows where on disk this app actually came from.
+     */
+    checkoutProbe: (() => CheckoutFacts | undefined) | undefined;
 
     constructor(
         private readonly store: Store,
@@ -2523,6 +2530,13 @@ export class Orchestrator {
         }
 
         const parts = [schedule.task, previousRunBlock(schedule)];
+        // Only where it could matter. A watcher that never touches a repo does
+        // not need to be told where Orbit's source lives, and the block is
+        // several lines of prompt.
+        if (taskTouchesCode(schedule.task)) {
+            const facts = this.checkoutProbe?.();
+            if (facts) parts.push(checkoutBlock(facts));
+        }
         if (schedule.quiet) {
             parts.push(
                 "If there is genuinely nothing worth interrupting the user for, reply with exactly: NOTHING TO REPORT",
