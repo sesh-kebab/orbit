@@ -45,6 +45,12 @@ export interface AgentRunnerHooks {
     getAgentTools(): Tool<any>[];
     /** The rules for what a deliverable looks like, appended to the brief. */
     getDesignLanguage(): string;
+    /**
+     * What Orbit knows about the user, rendered for a prompt. Read at dispatch
+     * rather than captured at construction so an agent started after a
+     * correction sees the correction.
+     */
+    getRemembered(): string | undefined;
     onUsage(input: number, output: number): void;
     onToolCall(): void;
     onFinished(agent: AgentView): void;
@@ -117,7 +123,7 @@ export class AgentRunner {
             this.armWatchdog(settings.agentTimeoutMinutes);
 
             const final = await session.sendAndWait(
-                { prompt: buildAgentPrompt(this.agent.task, this.hooks.getDesignLanguage()) },
+                { prompt: buildAgentPrompt(this.agent.task, this.hooks.getDesignLanguage(), this.hooks.getRemembered()) },
                 AGENT_IDLE_TIMEOUT_MS,
             );
 

@@ -92,7 +92,7 @@ import {
 } from "./selfPrompt.js";
 import { needsSoulStep, soulBlock, soulEntry, withSoulStep } from "./soul.js";
 import { checkDesignRevision } from "./design.js";
-import { correctMemory as applyMemoryCorrection, type MemoryCorrection } from "./memory.js";
+import { correctMemory as applyMemoryCorrection, rememberedBlock, type MemoryCorrection } from "./memory.js";
 import { deriveBoard } from "./board.js";
 import { describeMiss, findById } from "./ids.js";
 import {
@@ -477,13 +477,8 @@ export class Orchestrator {
         if (restored) parts.push(restored);
 
         if (state.memories.length > 0) {
-            const lines = state.memories
-                .slice(-60)
-                .map((memory) => `- [${memory.category}] ${memory.text}`)
-                .join("\n");
-            parts.push(
-                `<remembered>\nThings you have learned about this user. Treat them as true unless corrected.\n${lines}\n</remembered>`,
-            );
+            const remembered = rememberedBlock(state.memories);
+            if (remembered) parts.push(remembered);
         }
 
         const watchers = state.schedules.filter((schedule) => isRunnable(schedule));
@@ -1886,6 +1881,7 @@ export class Orchestrator {
             getMcpServers: () => this.mcpServers,
             getAgentTools: () => this.agentTools(),
             getDesignLanguage: () => this.designLanguage,
+            getRemembered: () => rememberedBlock(this.store.get().memories),
             onToolCall: () =>
                 this.store.update((state) => {
                     state.usage.toolCalls += 1;

@@ -183,9 +183,19 @@ You are working autonomously — the user is not watching your output, they see 
  * The design language sits between the preamble and the task, not after it: an
  * agent reads the task last and starts from there, and a formatting rule it
  * meets after the task reads as an afterthought to it.
+ *
+ * What is remembered about the user sits in the same window, and for a
+ * stronger reason: an agent that does not know a balance was paid will report
+ * it as outstanding, confidently, and the user will read that before anyone
+ * notices. See `rememberedBlock` for the morning that happened.
  */
-export function buildAgentPrompt(task: string, design?: string): string {
+export function buildAgentPrompt(task: string, design?: string, remembered?: string): string {
     const block = designBlock(design);
-    const parts = [AGENT_PREAMBLE, ...(block ? [block] : []), `<task>\n${task}\n</task>`];
+    const parts = [
+        AGENT_PREAMBLE,
+        ...(remembered ? [remembered] : []),
+        ...(block ? [block] : []),
+        `<task>\n${task}\n</task>`,
+    ];
     return parts.join("\n\n");
 }
