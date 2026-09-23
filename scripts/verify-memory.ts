@@ -12,6 +12,8 @@ import {
     MEMORY_CONTEXT_CAP,
     MEMORY_TEXT_CAP,
     PRIOR_TEXT_CAP,
+    TRUNCATION_MARKER,
+    clipMemory,
     correctMemory,
     rememberedBlock,
 } from "../src/main/orchestrator/memory.js";
@@ -168,6 +170,52 @@ check(
 );
 check("the newest memory survives the cap", capped.includes(`memory number ${MEMORY_CONTEXT_CAP + 4}`));
 check("the oldest memory is the one dropped", !capped.includes("memory number 0\n"));
+
+// MARK: - The clipping that lost a qualifier, 22 September 2026
+
+/**
+ * The memory exactly as it sits in the store tonight. Note the ending: the cut
+ * landed inside the word that began the qualifying clause, and "has no c" reads
+ * back as "has no claim".
+ */
+const AMEX_AS_STORED =
+    "Seshi's $460.00 expense reimbursement (report D10100003142352) was approved by Laura Cameron on 11 Aug 2026 and paid to his personal account the same day, so the matching $460.00 Amex corporate card balance on account ending 471005 has no c\u2026";
+
+check("the memory on disk really does end mid-word", AMEX_AS_STORED.endsWith("has no c\u2026"));
+check("and nothing in it says it was cut", !AMEX_AS_STORED.includes("truncated"));
+
+/**
+ * The same sentence, restored to something whole and therefore over the cap,
+ * run through the new rule. What matters is not which word survives: it is that
+ * the survivors are whole words and that the loss declares itself.
+ */
+const whole = `${AMEX_AS_STORED.slice(0, -1)}laim left to file and is his own to pay.`;
+const clipped = clipMemory(whole);
+check("the over-long memory is recognised as truncated", clipped.truncated);
+check("it fits the cap", clipped.text.length <= MEMORY_TEXT_CAP);
+check("the cut announces itself", clipped.text.endsWith(TRUNCATION_MARKER));
+
+const body = clipped.text.slice(0, -TRUNCATION_MARKER.length);
+check("it does not end in a fragment of a word", !body.endsWith("has no c"));
+check(
+    "every surviving word is a whole word from the original",
+    body.split(" ").every((word) => whole.includes(word)),
+);
+
+// MARK: - What the remembered block tells the reader to do with it
+
+const guidance = rememberedBlock([amex]) ?? "";
+check("fresh evidence is said to win over a memory", guidance.includes("fresh evidence wins"));
+check(
+    "it forbids talking someone out of something they verified",
+    guidance.includes("just verified"),
+);
+check("it forbids suppressing a warning on a memory's say-so", guidance.includes("never suppress a warning"));
+check("it explains what a truncated memory means", guidance.includes("[truncated]"));
+check(
+    "it no longer claims memories are simply true",
+    !guidance.includes("Treat them as true unless corrected"),
+);
 
 // MARK: - The allowlist
 

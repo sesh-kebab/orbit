@@ -92,7 +92,7 @@ import {
 } from "./selfPrompt.js";
 import { needsSoulStep, soulBlock, soulEntry, withSoulStep } from "./soul.js";
 import { checkDesignRevision } from "./design.js";
-import { correctMemory as applyMemoryCorrection, rememberedBlock, type MemoryCorrection } from "./memory.js";
+import { correctMemory as applyMemoryCorrection, clipMemory, rememberedBlock, MEMORY_TEXT_CAP, type MemoryCorrection } from "./memory.js";
 import { deriveBoard } from "./board.js";
 import { describeMiss, findById } from "./ids.js";
 import {
@@ -3204,7 +3204,8 @@ export class Orchestrator {
         category: MemoryNote["category"],
         source: MemoryNote["source"],
     ): Record<string, unknown> {
-        const trimmed = clip(text, 240);
+        const clipped = clipMemory(text);
+        const trimmed = clipped.text;
         const duplicate = this.store
             .get()
             .memories.find((memory) => memory.text.toLowerCase() === trimmed.toLowerCase());
@@ -3223,6 +3224,16 @@ export class Orchestrator {
         this.disk.saveMemories(this.store.get().memories);
         this.log({ kind: "memory.saved", title: trimmed, detail: category });
         this.store.flush();
+        // Say so. A caller that does not know its memory was cut cannot rewrite
+        // it, and the cut always takes the end of the sentence, which is where
+        // the qualifier lives.
+        if (clipped.truncated) {
+            return {
+                ok: true,
+                memoryId: memory.id,
+                warning: `That was ${text.trim().length} characters and the limit is ${MEMORY_TEXT_CAP}, so the end was cut and marked "[truncated]". Rewrite it shorter with orbit_correct_memory: the part that was lost is the part that qualified it.`,
+            };
+        }
         return { ok: true, memoryId: memory.id };
     }
 
