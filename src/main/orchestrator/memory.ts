@@ -68,7 +68,19 @@ export function rememberedBlock(memories: readonly MemoryNote[], cap = MEMORY_CO
         .slice(-cap)
         .map((memory) => `- [${memory.category}] ${memory.text}`)
         .join("\n");
-    return `<remembered>\nThings you have learned about this user. Treat them as true unless corrected.\n${lines}\n</remembered>`;
+    return [
+        "<remembered>",
+        "Things you have learned about this user. They were true when they were written.",
+        "They are beliefs recorded earlier, not findings: where something you have actually",
+        "checked in this run contradicts one, the fresh evidence wins. Say that it does, and",
+        "correct the memory with orbit_correct_memory. Do not talk someone out of a thing they",
+        "just verified on the strength of a line in this list, and never suppress a warning",
+        "because a memory says it is handled.",
+        "A memory ending in \"[truncated]\" lost its last clause. Treat the missing part as",
+        "unknown rather than guessing what it said.",
+        lines,
+        "</remembered>",
+    ].join("\n");
 }
 
 export interface MemoryCorrection {
@@ -91,9 +103,48 @@ export interface CorrectionOutcome {
     note?: string;
 }
 
-function clip(text: string, max: number): string {
-    const trimmed = text.trim();
-    return trimmed.length <= max ? trimmed : `${trimmed.slice(0, max - 1).trimEnd()}…`;
+export interface ClippedMemory {
+    text: string;
+    /** True when something was cut. The caller is expected to say so. */
+    truncated: boolean;
+}
+
+/**
+ * Shorten a memory for storage without silently destroying its meaning.
+ *
+ * The plain `clip` helper cuts at the character and appends an ellipsis, which
+ * is right for a tool label in the activity feed and actively dangerous for a
+ * memory, because a memory is re-asserted into a prompt and believed.
+ *
+ * What that cost, on 22 September 2026. A memory was written recording that a
+ * $460.00 expense reimbursement had been approved and paid to the user's own
+ * account on 11 August, "so the matching $460.00 Amex corporate card balance on
+ * account ending 471005 has no c". The sentence was 244 characters and the cap
+ * was 240. The four characters past the cap were the start of the clause that
+ * distinguished the two halves: the claim was settled, the card balance was
+ * still the user's to pay.
+ *
+ * Read back the next morning, "has no c…" reads as "has no claim", and Orbit
+ * told the user his briefing agent was wrong about an unpaid card and that it
+ * would stop the agent mentioning it again. The agent was right. The card is
+ * cancelled around 9 November.
+ *
+ * So: cut on a word boundary, never mid-word, and mark the cut so that a reader
+ * can see a thought was interrupted rather than completing it themselves. An
+ * interrupted sentence that announces itself is recoverable. One that does not
+ * is confidently wrong.
+ */
+export const TRUNCATION_MARKER = " … [truncated]";
+
+export function clipMemory(text: string, cap = MEMORY_TEXT_CAP): ClippedMemory {
+    const clean = text.replace(/\s+/g, " ").trim();
+    if (clean.length <= cap) return { text: clean, truncated: false };
+
+    const room = cap - TRUNCATION_MARKER.length;
+    const head = clean.slice(0, room);
+    const lastSpace = head.lastIndexOf(" ");
+    const body = (lastSpace > room * 0.5 ? head.slice(0, lastSpace) : head).trimEnd();
+    return { text: `${body}${TRUNCATION_MARKER}`, truncated: true };
 }
 
 function same(a: string, b: string): boolean {
@@ -121,7 +172,8 @@ export function correctMemory(
         return { memories: all, error: why };
     }
 
-    const text = clip(correction.text, MEMORY_TEXT_CAP);
+    const clipped = clipMemory(correction.text);
+    const text = clipped.text;
     if (text.length === 0) {
         return { memories: all, error: "A correction needs replacement text. To retire a memory outright, say so instead." };
     }
