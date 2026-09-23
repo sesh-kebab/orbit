@@ -12,6 +12,7 @@ import { readArtifact } from "./artifactDoc.js";
 import { migrateLegacyState } from "./migrate.js";
 import { clampToScreen, createPanel, defaultBounds, resizeFromTopLeft, resolveRendererUrl } from "./panel.js";
 import { assessFreshness, collectFreshnessFacts } from "./freshness.js";
+import { collectCheckoutFacts } from "./orchestrator/checkout.js";
 import { loadSettings, normalizeSettings, saveSettings, watchSettings } from "./settings.js";
 import {
     cancelDictation,
@@ -71,6 +72,15 @@ void app.whenReady().then(async () => {
     orchestrator.onSoftRestart = relaunch;
     orchestrator.freshnessProbe = checkFreshness;
     orchestrator.freshness = checkFreshness();
+    // Resolved from where this process was loaded, so a watcher that writes
+    // code cannot be misdirected to a checkout nothing is running.
+    orchestrator.checkoutProbe = () => {
+        try {
+            return collectCheckoutFacts(app.getAppPath());
+        } catch {
+            return undefined;
+        }
+    };
 
     store.on("state", (state) => {
         if (window && !window.isDestroyed()) {
