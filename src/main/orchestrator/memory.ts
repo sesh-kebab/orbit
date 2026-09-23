@@ -30,6 +30,47 @@ export const PRIOR_TEXT_CAP = 5;
 /** Longest a memory may be, matching what `remember` clips to. */
 export const MEMORY_TEXT_CAP = 240;
 
+/**
+ * How many memories go into a prompt. The newest win, because a correction is
+ * always newer than the belief it corrects.
+ */
+export const MEMORY_CONTEXT_CAP = 60;
+
+/**
+ * Render what is known about the user, for a prompt.
+ *
+ * This exists as one shared function rather than a string built at each call
+ * site because the two call sites disagreeing is a real bug that has already
+ * happened, not a tidiness concern.
+ *
+ * On 21 September at 15:59 the user wrote "Amex - this is done. I confirmed
+ * that the payment has gone through", and a memory was duly written saying the
+ * $460 balance had no claim outstanding. At 15:04 the next morning the daily
+ * briefing agent flagged the same $460 again, and Orbit's own chat turn
+ * corrected it in the same minute. Both were reasoning from the same store.
+ * Only one of them had been given it: `buildAgentPrompt` passed the preamble,
+ * the design language and the task, and nothing else. Agents did the looking,
+ * and agents were the ones told nothing.
+ *
+ * So the block is built once, here, and both the orchestrator's system prompt
+ * and every dispatched agent are handed the result. They can no longer drift,
+ * because there is no longer a second copy to drift from.
+ *
+ * Note that no attempt is made to select memories relevant to the task. It is
+ * tempting, and it fails on exactly the case above: the briefing agent's task
+ * says "produce a short executive briefing", never "Amex". Relevance only
+ * becomes knowable after the agent has read the mail, which is long after the
+ * prompt is built. Everything, capped and newest-first, is the honest answer.
+ */
+export function rememberedBlock(memories: readonly MemoryNote[], cap = MEMORY_CONTEXT_CAP): string | undefined {
+    if (memories.length === 0) return undefined;
+    const lines = memories
+        .slice(-cap)
+        .map((memory) => `- [${memory.category}] ${memory.text}`)
+        .join("\n");
+    return `<remembered>\nThings you have learned about this user. Treat them as true unless corrected.\n${lines}\n</remembered>`;
+}
+
 export interface MemoryCorrection {
     /** The replacement wording. */
     text: string;

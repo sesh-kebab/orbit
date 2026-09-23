@@ -8,7 +8,14 @@
  * runs without Electron and without touching the real memory store.
  */
 import { AGENT_TOOL_NAMES, FORBIDDEN_AGENT_TOOL_NAMES, selectAgentTools } from "../src/main/orchestrator/agentTools.js";
-import { MEMORY_TEXT_CAP, PRIOR_TEXT_CAP, correctMemory } from "../src/main/orchestrator/memory.js";
+import {
+    MEMORY_CONTEXT_CAP,
+    MEMORY_TEXT_CAP,
+    PRIOR_TEXT_CAP,
+    correctMemory,
+    rememberedBlock,
+} from "../src/main/orchestrator/memory.js";
+import { buildAgentPrompt } from "../src/main/orchestrator/persona.js";
 import type { MemoryNote } from "../src/shared/types.js";
 
 let passed = 0;
@@ -94,6 +101,73 @@ const history = rolling[0].priorText ?? [];
 check("retired wordings are capped", history.length === PRIOR_TEXT_CAP, history.length);
 check("the cap drops the oldest, not the newest", history[history.length - 1]?.text === `version ${PRIOR_TEXT_CAP + 2}`);
 check("the live text is the newest correction", rolling[0].text === `version ${PRIOR_TEXT_CAP + 3}`);
+
+// MARK: - What a dispatched agent is told, replayed from 22 September 2026
+
+/**
+ * The failure this section exists to prevent, in full.
+ *
+ * 21 Sep 15:59, the user, unprompted: "Amex - this is done. I confirmed that
+ * the payment has gone through." A memory was written the same evening.
+ *
+ * 22 Sep 15:04, the daily briefing agent, having read the same inbox: the Amex
+ * $460 is still outstanding. Orbit's own turn, in the same minute, off the same
+ * store: "One correction: it's still flagging the Amex $460, which you told me
+ * yesterday was paid."
+ *
+ * The parent was right and the child was wrong because only the parent had been
+ * handed the memories. These checks assert the child is handed them too.
+ */
+const amex: MemoryNote = {
+    id: "amex",
+    category: "fact",
+    text: "The $460.00 Amex corporate card balance was reimbursed and paid on 11 Aug 2026: it has no claim outstanding.",
+    createdAt: now,
+};
+
+const briefingTask = "Produce a short executive briefing for the start of the user's day.";
+
+const block = rememberedBlock([amex]);
+check("a remembered block is produced when anything is known", block !== undefined);
+check("it carries the memory text", block?.includes("no claim outstanding") === true);
+check("it names the category", block?.includes("[fact]") === true);
+check("nothing known produces no block", rememberedBlock([]) === undefined);
+
+const briefed = buildAgentPrompt(briefingTask, undefined, block);
+check("the briefing agent is now told about the Amex balance", briefed.includes("no claim outstanding"));
+check("the task still survives alongside it", briefed.includes(briefingTask));
+check(
+    "what is remembered is read before the task, not after it",
+    briefed.indexOf("<remembered>") < briefed.indexOf("<task>"),
+);
+check(
+    "an agent dispatched with nothing remembered gets no empty block",
+    !buildAgentPrompt(briefingTask, undefined, undefined).includes("<remembered>"),
+);
+
+/**
+ * Selecting memories by relevance to the task was considered and rejected. This
+ * is why: the task that failed never mentions the subject it got wrong.
+ */
+check(
+    "the briefing task gives no clue that the Amex memory is the relevant one",
+    !briefingTask.toLowerCase().includes("amex"),
+);
+
+/** Newest win, because a correction is always newer than the belief it corrects. */
+const many: MemoryNote[] = Array.from({ length: MEMORY_CONTEXT_CAP + 5 }, (_, index) => ({
+    id: `m${index}`,
+    category: "fact",
+    text: `memory number ${index}`,
+    createdAt: now + index,
+}));
+const capped = rememberedBlock(many) ?? "";
+check(
+    "the block is capped",
+    capped.split("\n").filter((line) => line.startsWith("- [")).length === MEMORY_CONTEXT_CAP,
+);
+check("the newest memory survives the cap", capped.includes(`memory number ${MEMORY_CONTEXT_CAP + 4}`));
+check("the oldest memory is the one dropped", !capped.includes("memory number 0\n"));
 
 // MARK: - The allowlist
 
