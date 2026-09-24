@@ -10,12 +10,15 @@
 import { AGENT_TOOL_NAMES, FORBIDDEN_AGENT_TOOL_NAMES, selectAgentTools } from "../src/main/orchestrator/agentTools.js";
 import {
     MEMORY_CONTEXT_CAP,
-    MEMORY_TEXT_CAP,
+    MEMORY_RENDER_CAP,
+    MEMORY_STORE_CAP,
     PRIOR_TEXT_CAP,
     TRUNCATION_MARKER,
     clipMemory,
     correctMemory,
+    endsIncomplete,
     rememberedBlock,
+    storableMemoryText,
 } from "../src/main/orchestrator/memory.js";
 import { buildAgentPrompt } from "../src/main/orchestrator/persona.js";
 import type { MemoryNote } from "../src/shared/types.js";
@@ -90,8 +93,14 @@ const recategorised = correctMemory(stale, "m2", { text: "Seshi dislikes em-dash
 check("a category-only change applies", recategorised.corrected?.category === "fact");
 check("a category-only change retires no wording", recategorised.corrected?.priorText === undefined);
 
-const long = correctMemory(stale, "m1", { text: "x".repeat(MEMORY_TEXT_CAP + 50) }, now);
-check("long corrections are clipped", (long.corrected?.text.length ?? 0) <= MEMORY_TEXT_CAP);
+const long = correctMemory(stale, "m1", { text: "x".repeat(MEMORY_RENDER_CAP + 50) }, now);
+check(
+    "a correction past the render cap is kept whole, not clipped",
+    long.corrected?.text.length === MEMORY_RENDER_CAP + 50,
+    long.corrected?.text.length,
+);
+const runaway = correctMemory(stale, "m1", { text: "y".repeat(MEMORY_STORE_CAP + 500) }, now);
+check("but the runaway ceiling still holds", (runaway.corrected?.text.length ?? 0) <= MEMORY_STORE_CAP);
 
 // MARK: - History is capped
 
@@ -192,7 +201,7 @@ check("and nothing in it says it was cut", !AMEX_AS_STORED.includes("truncated")
 const whole = `${AMEX_AS_STORED.slice(0, -1)}laim left to file and is his own to pay.`;
 const clipped = clipMemory(whole);
 check("the over-long memory is recognised as truncated", clipped.truncated);
-check("it fits the cap", clipped.text.length <= MEMORY_TEXT_CAP);
+check("it fits the cap", clipped.text.length <= MEMORY_RENDER_CAP);
 check("the cut announces itself", clipped.text.endsWith(TRUNCATION_MARKER));
 
 const body = clipped.text.slice(0, -TRUNCATION_MARKER.length);
@@ -211,10 +220,51 @@ check(
     guidance.includes("just verified"),
 );
 check("it forbids suppressing a warning on a memory's say-so", guidance.includes("never suppress a warning"));
-check("it explains what a truncated memory means", guidance.includes("[truncated]"));
 check(
     "it no longer claims memories are simply true",
     !guidance.includes("Treat them as true unless corrected"),
+);
+check(
+    "a list with nothing truncated says nothing about truncation",
+    !guidance.includes("[truncated]"),
+    guidance,
+);
+
+// MARK: - Storing whole, shortening only at render (23 September 2026)
+
+/**
+ * The fix the marker could not deliver. Marking a cut tells a reader something
+ * is missing; it does not tell them what. That is only answerable if the words
+ * still exist, so `remember` stores the sentence whole and the shortening moves
+ * to the prompt.
+ */
+const stored = storableMemoryText(whole);
+check("a long memory is stored whole", stored.text === whole.replace(/\s+/g, " ").trim(), stored.text.length);
+check("and storing it is not reported as a truncation", !stored.truncated);
+check("the render cap is smaller than the storage ceiling", MEMORY_RENDER_CAP < MEMORY_STORE_CAP);
+
+const longNote: MemoryNote = { id: "whole", category: "fact", text: whole, createdAt: now };
+const rendered = rememberedBlock([longNote]) ?? "";
+const renderedLine = rendered.split("\n").find((line) => line.startsWith("- [")) ?? "";
+check("the prompt copy is shortened", renderedLine.length < whole.length);
+check("the prompt copy declares the cut", renderedLine.endsWith(TRUNCATION_MARKER));
+check("and it says the rest is recoverable", rendered.includes("shortened here, not lost"));
+check("naming the tool that recovers it", rendered.includes("orbit_list_memories"));
+
+/**
+ * The opposite case, and the reason the two are not one message. A memory
+ * written before tonight was cut at the character before it reached disk, so
+ * there is nothing to go and read. Sending a reader to orbit_list_memories for
+ * a sentence that no longer exists is worse than saying nothing.
+ */
+check("a memory cut before storage is recognised", endsIncomplete(AMEX_AS_STORED));
+check("a whole sentence is not", !endsIncomplete(whole));
+const legacy: MemoryNote = { id: "legacy", category: "fact", text: AMEX_AS_STORED, createdAt: now };
+const legacyBlock = rememberedBlock([legacy]) ?? "";
+check("it is called unrecoverable rather than shortened", legacyBlock.includes("cannot be recovered"));
+check(
+    "and the reader is not sent looking for words that are gone",
+    !legacyBlock.includes("shortened here, not lost"),
 );
 
 // MARK: - The allowlist
