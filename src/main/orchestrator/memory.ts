@@ -27,8 +27,24 @@ import { describeMiss, findById, findIndexById } from "./ids.js";
 /** How many superseded wordings to keep before dropping the oldest. */
 export const PRIOR_TEXT_CAP = 5;
 
-/** Longest a memory may be, matching what `remember` clips to. */
-export const MEMORY_TEXT_CAP = 240;
+/**
+ * Longest a memory is *rendered* into a prompt. Not what is kept on disk.
+ *
+ * The distinction is the whole point. Until now this was the storage cap:
+ * `remember` clipped to it before writing, so the words past it were gone and
+ * no later reader, however careful, could get them back. See `clipMemory`
+ * below for what that cost. Storage keeps the sentence whole; only the copy
+ * pasted into a prompt is shortened, and a shortened one says where the rest
+ * of it lives.
+ */
+export const MEMORY_RENDER_CAP = 240;
+
+/**
+ * The one hard limit on what is stored: generous, and there only so a runaway
+ * caller cannot write a megabyte into the memory file. Anything under this is
+ * kept exactly as written.
+ */
+export const MEMORY_STORE_CAP = 4000;
 
 /**
  * How many memories go into a prompt. The newest win, because a correction is
@@ -64,10 +80,32 @@ export const MEMORY_CONTEXT_CAP = 60;
  */
 export function rememberedBlock(memories: readonly MemoryNote[], cap = MEMORY_CONTEXT_CAP): string | undefined {
     if (memories.length === 0) return undefined;
-    const lines = memories
-        .slice(-cap)
-        .map((memory) => `- [${memory.category}] ${memory.text}`)
-        .join("\n");
+    const shown = memories.slice(-cap).map((memory) => ({ memory, clipped: clipMemory(memory.text) }));
+    const lines = shown.map(({ memory, clipped }) => `- [${memory.category}] ${clipped.text}`).join("\n");
+    // Only say it when it is true. A standing instruction about truncation on a
+    // list where nothing was truncated is noise, and noise in a preamble is how
+    // the real warnings stop being read.
+    const anyLost = shown.some(({ memory }) => endsIncomplete(memory.text));
+    // A memory can be both: written already-cut, and still long enough to be
+    // shortened again here. "Unrecoverable" is the dominant truth about it, so
+    // it does not also get counted as something worth going to look up.
+    const anyClipped = shown.some(({ memory, clipped }) => clipped.truncated && !endsIncomplete(memory.text));
+    const truncationGuidance = [
+        ...(anyClipped
+            ? [
+                  "A memory ending in \"[truncated]\" is shortened here, not lost: the full wording is",
+                  "stored. Call orbit_list_memories to read the rest before relying on it, and never",
+                  "guess at the missing clause. That is where the qualifier lives.",
+              ]
+            : []),
+        ...(anyLost
+            ? [
+                  "Some memories below were cut short before they were stored and cannot be recovered,",
+                  "even from orbit_list_memories. Treat whatever followed as unknown rather than",
+                  "guessing, and rewrite the memory once you learn what it should have said.",
+              ]
+            : []),
+    ];
     return [
         "<remembered>",
         "Things you have learned about this user. They were true when they were written.",
@@ -76,8 +114,7 @@ export function rememberedBlock(memories: readonly MemoryNote[], cap = MEMORY_CO
         "correct the memory with orbit_correct_memory. Do not talk someone out of a thing they",
         "just verified on the strength of a line in this list, and never suppress a warning",
         "because a memory says it is handled.",
-        "A memory ending in \"[truncated]\" lost its last clause. Treat the missing part as",
-        "unknown rather than guessing what it said.",
+        ...truncationGuidance,
         lines,
         "</remembered>",
     ].join("\n");
@@ -110,7 +147,7 @@ export interface ClippedMemory {
 }
 
 /**
- * Shorten a memory for storage without silently destroying its meaning.
+ * Shorten a memory for a prompt without silently destroying its meaning.
  *
  * The plain `clip` helper cuts at the character and appends an ellipsis, which
  * is right for a tool label in the activity feed and actively dangerous for a
@@ -133,10 +170,17 @@ export interface ClippedMemory {
  * can see a thought was interrupted rather than completing it themselves. An
  * interrupted sentence that announces itself is recoverable. One that does not
  * is confidently wrong.
+ *
+ * And, since 23 September, this runs at render rather than at write. Marking
+ * the cut tells a reader that something is missing; it does not tell them what.
+ * That is only answerable if the words still exist somewhere, so the store now
+ * holds the sentence whole and this shortens the copy going into the prompt.
+ * The difference between the two versions of this fix is the difference between
+ * "you cannot trust the end of this line" and "here is how to go and read it".
  */
 export const TRUNCATION_MARKER = " … [truncated]";
 
-export function clipMemory(text: string, cap = MEMORY_TEXT_CAP): ClippedMemory {
+export function clipMemory(text: string, cap = MEMORY_RENDER_CAP): ClippedMemory {
     const clean = text.replace(/\s+/g, " ").trim();
     if (clean.length <= cap) return { text: clean, truncated: false };
 
@@ -149,6 +193,27 @@ export function clipMemory(text: string, cap = MEMORY_TEXT_CAP): ClippedMemory {
 
 function same(a: string, b: string): boolean {
     return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+/**
+ * Does this text stop mid-thought with no way back? True for anything written
+ * under the old write-time clip, which left either the marker or a bare
+ * ellipsis at the end and kept nothing else.
+ */
+export function endsIncomplete(text: string): boolean {
+    const clean = text.trimEnd();
+    return clean.endsWith(TRUNCATION_MARKER.trim()) || clean.endsWith("\u2026");
+}
+
+/**
+ * Normalise a memory for storage. Whitespace is collapsed because a memory is
+ * one sentence, and the only truncation left is the runaway ceiling, which no
+ * real memory comes near.
+ */
+export function storableMemoryText(text: string): ClippedMemory {
+    const clean = text.replace(/\s+/g, " ").trim();
+    if (clean.length <= MEMORY_STORE_CAP) return { text: clean, truncated: false };
+    return clipMemory(clean, MEMORY_STORE_CAP);
 }
 
 /**
@@ -172,7 +237,7 @@ export function correctMemory(
         return { memories: all, error: why };
     }
 
-    const clipped = clipMemory(correction.text);
+    const clipped = storableMemoryText(correction.text);
     const text = clipped.text;
     if (text.length === 0) {
         return { memories: all, error: "A correction needs replacement text. To retire a memory outright, say so instead." };

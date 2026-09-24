@@ -92,7 +92,7 @@ import {
 } from "./selfPrompt.js";
 import { needsSoulStep, soulBlock, soulEntry, withSoulStep } from "./soul.js";
 import { checkDesignRevision } from "./design.js";
-import { correctMemory as applyMemoryCorrection, clipMemory, rememberedBlock, MEMORY_TEXT_CAP, type MemoryCorrection } from "./memory.js";
+import { correctMemory as applyMemoryCorrection, storableMemoryText, rememberedBlock, MEMORY_RENDER_CAP, MEMORY_STORE_CAP, type MemoryCorrection } from "./memory.js";
 import { deriveBoard } from "./board.js";
 import { describeMiss, findById } from "./ids.js";
 import {
@@ -3204,7 +3204,7 @@ export class Orchestrator {
         category: MemoryNote["category"],
         source: MemoryNote["source"],
     ): Record<string, unknown> {
-        const clipped = clipMemory(text);
+        const clipped = storableMemoryText(text);
         const trimmed = clipped.text;
         const duplicate = this.store
             .get()
@@ -3224,14 +3224,22 @@ export class Orchestrator {
         this.disk.saveMemories(this.store.get().memories);
         this.log({ kind: "memory.saved", title: trimmed, detail: category });
         this.store.flush();
-        // Say so. A caller that does not know its memory was cut cannot rewrite
-        // it, and the cut always takes the end of the sentence, which is where
-        // the qualifier lives.
+        // Say so, but say the right thing. Storage keeps the sentence whole; a
+        // long one is shortened only where it is pasted into a prompt, so the
+        // useful advice is about the end of the sentence being the part a
+        // reader will not see by default, not about it being gone.
+        if (trimmed.length > MEMORY_RENDER_CAP) {
+            return {
+                ok: true,
+                memoryId: memory.id,
+                warning: `Stored in full (${trimmed.length} characters), but only the first ${MEMORY_RENDER_CAP} are shown in a prompt, and the rest needs orbit_list_memories to read. Put the qualifying clause early, or shorten it with orbit_correct_memory.`,
+            };
+        }
         if (clipped.truncated) {
             return {
                 ok: true,
                 memoryId: memory.id,
-                warning: `That was ${text.trim().length} characters and the limit is ${MEMORY_TEXT_CAP}, so the end was cut and marked "[truncated]". Rewrite it shorter with orbit_correct_memory: the part that was lost is the part that qualified it.`,
+                warning: `That was over the ${MEMORY_STORE_CAP} character ceiling and the end was cut. Rewrite it shorter with orbit_correct_memory: a memory is one sentence.`,
             };
         }
         return { ok: true, memoryId: memory.id };
