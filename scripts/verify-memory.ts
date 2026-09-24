@@ -9,6 +9,8 @@
  */
 import { AGENT_TOOL_NAMES, FORBIDDEN_AGENT_TOOL_NAMES, selectAgentTools } from "../src/main/orchestrator/agentTools.js";
 import {
+    DEFAULT_MEMORY_CATEGORY,
+    MEMORY_CATEGORIES,
     MEMORY_CONTEXT_CAP,
     MEMORY_RENDER_CAP,
     MEMORY_STORE_CAP,
@@ -17,6 +19,7 @@ import {
     clipMemory,
     correctMemory,
     endsIncomplete,
+    normaliseCategory,
     rememberedBlock,
     storableMemoryText,
 } from "../src/main/orchestrator/memory.js";
@@ -266,6 +269,31 @@ check(
     "and the reader is not sent looking for words that are gone",
     !legacyBlock.includes("shortened here, not lost"),
 );
+
+// MARK: - The memory that arrived with no category at all (17 September 2026)
+
+/**
+ * Written by an agent across the agent bridge, which does not run the tool's
+ * own z.enum. It has rendered as "[undefined]" in every prompt since, on the
+ * line naming the approver for Game Streaming session limits.
+ */
+const uncategorised = { id: "nocat", text: "Apars Walia approves session limits.", createdAt: now } as unknown as MemoryNote;
+const uncategorisedBlock = rememberedBlock([uncategorised]) ?? "";
+check("no prompt ever shows an undefined category", !uncategorisedBlock.includes("[undefined]"), uncategorisedBlock);
+check("it falls back to the least specific category", uncategorisedBlock.includes(`[${DEFAULT_MEMORY_CATEGORY}]`));
+check("the fallback is itself a real category", MEMORY_CATEGORIES.includes(DEFAULT_MEMORY_CATEGORY));
+check("a real category is left alone", normaliseCategory("routine") === "routine");
+check("a made-up one is not", normaliseCategory("urgent") === DEFAULT_MEMORY_CATEGORY);
+check("and neither is nothing at all", normaliseCategory(undefined) === DEFAULT_MEMORY_CATEGORY);
+
+/** A correction may not smuggle a bad category in either. */
+const badCategory = correctMemory(
+    [note("m1", "something")],
+    "m1",
+    { text: "something else", category: "nonsense" as MemoryNote["category"] },
+    now,
+);
+check("a correction cannot set a category that does not exist", badCategory.corrected?.category === DEFAULT_MEMORY_CATEGORY);
 
 // MARK: - The allowlist
 
