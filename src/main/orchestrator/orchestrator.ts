@@ -92,7 +92,7 @@ import {
 } from "./selfPrompt.js";
 import { needsSoulStep, soulBlock, soulEntry, withSoulStep } from "./soul.js";
 import { checkDesignRevision } from "./design.js";
-import { correctMemory as applyMemoryCorrection, storableMemoryText, rememberedBlock, MEMORY_RENDER_CAP, MEMORY_STORE_CAP, type MemoryCorrection } from "./memory.js";
+import { correctMemory as applyMemoryCorrection, storableMemoryText, normaliseCategory, rememberedBlock, MEMORY_RENDER_CAP, MEMORY_STORE_CAP, type MemoryCorrection } from "./memory.js";
 import { deriveBoard } from "./board.js";
 import { describeMiss, findById } from "./ids.js";
 import {
@@ -992,7 +992,7 @@ export class Orchestrator {
                     memories: this.store.get().memories.map((memory) => ({
                         id: memory.id,
                         text: memory.text,
-                        category: memory.category,
+                        category: normaliseCategory(memory.category),
                     })),
                 }),
             }),
@@ -3214,7 +3214,7 @@ export class Orchestrator {
         const memory: MemoryNote = {
             id: randomUUID(),
             text: trimmed,
-            category,
+            category: normaliseCategory(category),
             createdAt: Date.now(),
             source,
         };

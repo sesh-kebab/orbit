@@ -27,6 +27,35 @@ import { describeMiss, findById, findIndexById } from "./ids.js";
 /** How many superseded wordings to keep before dropping the oldest. */
 export const PRIOR_TEXT_CAP = 5;
 
+/** The categories a memory may carry. */
+export const MEMORY_CATEGORIES = ["preference", "fact", "routine", "person", "project"] as const;
+
+/** What a memory falls back to. The least specific claim about what it is. */
+export const DEFAULT_MEMORY_CATEGORY: MemoryNote["category"] = "fact";
+
+/**
+ * Coerce whatever arrived into a real category.
+ *
+ * `orbit_remember`'s own schema is a `z.enum`, so nothing reaches the store
+ * without a category by that route. Agents do not take that route: they call
+ * the tool across the agent bridge, and one of them wrote a memory on 17
+ * September with no category field at all. It has been rendering as
+ * "[undefined]" in every prompt since, on a line that reads "Apars Walia is
+ * the primary approver for Game Streaming session limits".
+ *
+ * A label of "[undefined]" is not a small cosmetic problem in a prompt. Every
+ * other line announces what kind of claim it is, so the odd one out reads as a
+ * malformed record, and a reader who discounts a record discounts the approver
+ * named in it. Validating at the tool boundary would have missed this, because
+ * the boundary that failed was not the one with the schema on it. So it is
+ * done here, where every write and every render has to pass.
+ */
+export function normaliseCategory(category: unknown): MemoryNote["category"] {
+    return MEMORY_CATEGORIES.includes(category as MemoryNote["category"])
+        ? (category as MemoryNote["category"])
+        : DEFAULT_MEMORY_CATEGORY;
+}
+
 /**
  * Longest a memory is *rendered* into a prompt. Not what is kept on disk.
  *
@@ -81,7 +110,9 @@ export const MEMORY_CONTEXT_CAP = 60;
 export function rememberedBlock(memories: readonly MemoryNote[], cap = MEMORY_CONTEXT_CAP): string | undefined {
     if (memories.length === 0) return undefined;
     const shown = memories.slice(-cap).map((memory) => ({ memory, clipped: clipMemory(memory.text) }));
-    const lines = shown.map(({ memory, clipped }) => `- [${memory.category}] ${clipped.text}`).join("\n");
+    const lines = shown
+        .map(({ memory, clipped }) => `- [${normaliseCategory(memory.category)}] ${clipped.text}`)
+        .join("\n");
     // Only say it when it is true. A standing instruction about truncation on a
     // list where nothing was truncated is noise, and noise in a preamble is how
     // the real warnings stop being read.
@@ -268,7 +299,7 @@ export function correctMemory(
     const corrected: MemoryNote = {
         ...current,
         text,
-        category: correction.category ?? current.category,
+        category: normaliseCategory(correction.category ?? current.category),
         correctedAt: now,
         ...(priorText.length > 0 ? { priorText: priorText.slice(-PRIOR_TEXT_CAP) } : {}),
     };
