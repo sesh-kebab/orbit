@@ -227,6 +227,112 @@ function same(a: string, b: string): boolean {
 }
 
 /**
+ * Words too common to carry meaning, so that two sentences are compared on
+ * what they claim rather than on how English is built. "Seshi" and "Orbit" are
+ * in here for the same reason: nearly every memory names one or both, so they
+ * make unrelated records look alike.
+ */
+const OVERLAP_STOPWORDS = new Set(
+    (
+        "a an and are as at be been by do does for from had has have he her him his in " +
+        "into is it its not of on or she that the them then they this to was were what " +
+        "when where which who will with would you your seshi orbit want wants"
+    ).split(" "),
+);
+
+function contentWords(text: string): Set<string> {
+    return new Set(
+        text
+            .toLowerCase()
+            .match(/[a-z0-9]+/g)
+            ?.filter((word) => word.length > 2 && !OVERLAP_STOPWORDS.has(word)) ?? [],
+    );
+}
+
+/** How alike two memories are, on the words that actually carry a claim. */
+export interface MemorySimilarity {
+    /** Shared words over all words. Penalises one sentence being much longer. */
+    jaccard: number;
+    /** Shared words over the shorter sentence's words. Catches "B restates A, plus more". */
+    containment: number;
+}
+
+export function memorySimilarity(a: string, b: string): MemorySimilarity {
+    const left = contentWords(a);
+    const right = contentWords(b);
+    if (left.size === 0 || right.size === 0) return { jaccard: 0, containment: 0 };
+
+    let shared = 0;
+    for (const word of left) if (right.has(word)) shared += 1;
+    const union = left.size + right.size - shared;
+    return {
+        jaccard: union === 0 ? 0 : shared / union,
+        containment: shared / Math.min(left.size, right.size),
+    };
+}
+
+/**
+ * Where the line sits between "this is the same memory again" and "these are
+ * two facts about the same subject".
+ *
+ * Calibrated against the real store on 24 September, which held 60 memories.
+ * Every pair was scored with the stopword list above. One pair stood out: the
+ * two records saying Dhaivat Pandit goes by DP, at containment 0.71 and
+ * Jaccard 0.39. The next pair down on either axis was containment 0.50 and
+ * Jaccard 0.27, so both lines below sit inside a real gap rather than being
+ * round numbers chosen because they look tidy.
+ *
+ * The runner-up pairs are the interesting part. Two records about ADO ids in
+ * leadership documents are a genuine restatement and score 0.47 containment;
+ * two records about Apars Walia and Lakshey Hooda are genuinely complementary
+ * and score 0.50. The true duplicate scores *lower* than the pair that should
+ * be kept. Word overlap cannot separate them, so do not pretend it can.
+ *
+ * Block only above the line where the evidence is unambiguous, and below it
+ * say what was noticed and let the writer decide. Guessing wrong in the
+ * blocking direction loses a fact permanently and silently, which is the
+ * failure mode this store has already suffered twice.
+ */
+export const DUPLICATE_CONTAINMENT = 0.7;
+export const DUPLICATE_JACCARD = 0.35;
+export const RELATED_CONTAINMENT = 0.4;
+export const RELATED_JACCARD = 0.2;
+
+export interface MemoryOverlap {
+    id: string;
+    text: string;
+    similarity: MemorySimilarity;
+}
+
+export interface OverlapReport {
+    /** Near enough that writing a second record is certainly wrong. */
+    duplicate?: MemoryOverlap;
+    /** Worth a look, ordered most alike first. Never a reason to drop the write. */
+    related: MemoryOverlap[];
+}
+
+/**
+ * Compare a candidate memory against everything already known.
+ *
+ * Exact-match dedup has never been enough: the store accumulated paraphrases
+ * because the same fact written twice in different words is two different
+ * strings. A prompt carrying the same claim twice spends its budget twice and
+ * invites the model to treat a repetition as emphasis.
+ */
+export function findMemoryOverlap(text: string, memories: MemoryNote[]): OverlapReport {
+    const scored = memories
+        .map((memory) => ({ id: memory.id, text: memory.text, similarity: memorySimilarity(text, memory.text) }))
+        .filter(({ similarity }) => similarity.jaccard >= RELATED_JACCARD || similarity.containment >= RELATED_CONTAINMENT)
+        .sort((a, b) => b.similarity.containment - a.similarity.containment);
+
+    const duplicate = scored.find(
+        ({ similarity }) =>
+            similarity.containment >= DUPLICATE_CONTAINMENT && similarity.jaccard >= DUPLICATE_JACCARD,
+    );
+    return { duplicate, related: scored.filter((entry) => entry !== duplicate) };
+}
+
+/**
  * Does this text stop mid-thought with no way back? True for anything written
  * under the old write-time clip, which left either the marker or a bare
  * ellipsis at the end and kept nothing else.
@@ -305,4 +411,109 @@ export function correctMemory(
     };
     all[index] = corrected;
     return { memories: all, corrected };
+}
+
+/**
+ * Every pair in the store that looks like the same claim written twice.
+ *
+ * The write-time guard can only stop new duplicates. The ones already on disk
+ * predate it, and nothing reviews the memory list except the nightly
+ * reflection, which had to go and write an ad-hoc script to find them on 24
+ * September. A fact Orbit can work out for itself should not need a script, so
+ * this is surfaced through `orbit_list_memories` and the pairs can be merged
+ * with `orbit_correct_memory`.
+ */
+export interface DuplicatePair {
+    a: MemoryOverlap;
+    b: MemoryOverlap;
+    likely: boolean;
+}
+
+export function findDuplicatePairs(memories: MemoryNote[]): DuplicatePair[] {
+    const pairs: DuplicatePair[] = [];
+    for (let i = 0; i < memories.length; i += 1) {
+        for (let j = i + 1; j < memories.length; j += 1) {
+            const similarity = memorySimilarity(memories[i].text, memories[j].text);
+            if (similarity.jaccard < RELATED_JACCARD && similarity.containment < RELATED_CONTAINMENT) continue;
+            pairs.push({
+                a: { id: memories[i].id, text: memories[i].text, similarity },
+                b: { id: memories[j].id, text: memories[j].text, similarity },
+                likely:
+                    similarity.containment >= DUPLICATE_CONTAINMENT && similarity.jaccard >= DUPLICATE_JACCARD,
+            });
+        }
+    }
+    return pairs.sort((x, y) => y.a.similarity.containment - x.a.similarity.containment);
+}
+
+/**
+ * Fold one memory into another.
+ *
+ * Detecting a duplicate is worth nothing without a way to resolve it, and on
+ * 24 September there was none. `orbit_forget` destroys a record and is
+ * withheld from agents for exactly that reason, so the nightly reflection
+ * could see the two records about what DP is called and do nothing about
+ * either: correcting one still leaves two, and deleting one it may not do.
+ *
+ * A merge is the same trade that made `correctMemory` safe. The survivor takes
+ * the agreed wording, and the loser's sentence is retired into the survivor's
+ * `priorText` rather than dropped, so the claim leaves the active list without
+ * leaving the store. Nothing is destroyed, so an agent can be trusted with it.
+ */
+export interface MergeOutcome {
+    memories: MemoryNote[];
+    merged?: MemoryNote;
+    error?: string;
+}
+
+export function mergeMemories(
+    memories: readonly MemoryNote[],
+    keepId: string,
+    foldId: string,
+    text: string | undefined,
+    reason: string | undefined,
+    now: number,
+): MergeOutcome {
+    const all = [...memories];
+    if (keepId === foldId) {
+        return { memories: all, error: "Those are the same memory. A merge needs two different ids." };
+    }
+
+    const keepIndex = findIndexById(all, keepId);
+    if (keepIndex === -1) {
+        return { memories: all, error: describeMiss(findById(all, keepId), "memory") };
+    }
+    const foldIndex = findIndexById(all, foldId);
+    if (foldIndex === -1) {
+        return { memories: all, error: describeMiss(findById(all, foldId), "memory") };
+    }
+
+    const keep = all[keepIndex];
+    const fold = all[foldIndex];
+
+    // The surviving wording defaults to the one being kept, so a merge that
+    // only wants the duplicate gone does not have to restate the sentence.
+    const wanted = storableMemoryText(text ?? keep.text).text;
+    if (wanted.length === 0) {
+        return { memories: all, error: "The surviving memory cannot be empty." };
+    }
+
+    const priorText = [...(keep.priorText ?? []), ...(fold.priorText ?? [])];
+    priorText.push({
+        text: fold.text,
+        retiredAt: now,
+        reason: reason ?? `merged into ${keepId}`,
+    });
+    if (!same(keep.text, wanted)) {
+        priorText.push({ text: keep.text, retiredAt: now, ...(reason ? { reason } : {}) });
+    }
+
+    const merged: MemoryNote = {
+        ...keep,
+        text: wanted,
+        correctedAt: now,
+        priorText: priorText.slice(-PRIOR_TEXT_CAP),
+    };
+    all[keepIndex] = merged;
+    return { memories: all.filter((memory) => memory.id !== foldId), merged };
 }

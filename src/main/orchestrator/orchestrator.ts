@@ -92,7 +92,7 @@ import {
 } from "./selfPrompt.js";
 import { needsSoulStep, soulBlock, soulEntry, withSoulStep } from "./soul.js";
 import { checkDesignRevision } from "./design.js";
-import { correctMemory as applyMemoryCorrection, storableMemoryText, normaliseCategory, rememberedBlock, MEMORY_RENDER_CAP, MEMORY_STORE_CAP, type MemoryCorrection } from "./memory.js";
+import { correctMemory as applyMemoryCorrection, mergeMemories as mergeMemoriesIn, storableMemoryText, normaliseCategory, rememberedBlock, findMemoryOverlap, findDuplicatePairs, MEMORY_RENDER_CAP, MEMORY_STORE_CAP, type MemoryCorrection } from "./memory.js";
 import { deriveBoard } from "./board.js";
 import { describeMiss, findById } from "./ids.js";
 import {
@@ -988,13 +988,29 @@ export class Orchestrator {
                 description: "List everything you currently remember about the user.",
                 skipPermission: true,
                 parameters: z.object({}),
-                handler: async () => ({
-                    memories: this.store.get().memories.map((memory) => ({
-                        id: memory.id,
-                        text: memory.text,
-                        category: normaliseCategory(memory.category),
-                    })),
-                }),
+                handler: async () => {
+                    const memories = this.store.get().memories;
+                    const pairs = findDuplicatePairs(memories);
+                    return {
+                        memories: memories.map((memory) => ({
+                            id: memory.id,
+                            text: memory.text,
+                            category: normaliseCategory(memory.category),
+                        })),
+                        // Absence is the normal case, so say nothing when there
+                        // is nothing. A field that is always present is furniture.
+                        ...(pairs.length > 0
+                            ? {
+                                  possibleDuplicates: pairs.slice(0, 10).map((pair) => ({
+                                      ids: [pair.a.id, pair.b.id],
+                                      texts: [pair.a.text, pair.b.text],
+                                      likely: pair.likely,
+                                  })),
+                                  advice: "Pairs marked likely are near certainly one claim written twice: merge with orbit_correct_memory, then orbit_forget the loser. The rest may be complementary, so read before merging.",
+                              }
+                            : {}),
+                    };
+                },
             }),
 
             defineTool("orbit_correct_memory", {
@@ -1015,6 +1031,26 @@ export class Orchestrator {
                 }),
                 handler: async ({ memoryId, text, category, reason }) =>
                     this.correctMemory(memoryId, { text, category, reason }),
+            }),
+
+            defineTool("orbit_merge_memories", {
+                description:
+                    "Fold one remembered item into another when both assert the same thing in different words. The survivor keeps its id and takes the agreed wording; the other one's sentence is retired into the survivor's history rather than deleted, so nothing is lost. Use it on the pairs orbit_list_memories reports as possible duplicates, after reading both: two facts about the same person or project are not duplicates and should both be kept.",
+                skipPermission: true,
+                parameters: z.object({
+                    keepId: z.string().describe("Id of the memory that survives, from orbit_list_memories."),
+                    foldId: z.string().describe("Id of the memory folded into it. It leaves the active list."),
+                    text: z
+                        .string()
+                        .optional()
+                        .describe("The wording the survivor should carry afterwards. Omit to keep its current sentence."),
+                    reason: z
+                        .string()
+                        .optional()
+                        .describe("Why they were the same claim, in a few words. Kept against the retired text."),
+                }),
+                handler: async ({ keepId, foldId, text, reason }) =>
+                    this.mergeMemories(keepId, foldId, text, reason),
             }),
 
             defineTool("orbit_forget", {
@@ -3211,6 +3247,22 @@ export class Orchestrator {
             .memories.find((memory) => memory.text.toLowerCase() === trimmed.toLowerCase());
         if (duplicate) return { ok: true, note: "Already remembered.", memoryId: duplicate.id };
 
+        // Exact match is not the only way to say the same thing twice, and the
+        // store proves it: it carried the same claim about what DP is called in
+        // two different wordings. Refuse only where the overlap is unambiguous,
+        // and point at the record to amend rather than silently dropping the
+        // new wording, which may well be the better one.
+        const overlap = findMemoryOverlap(trimmed, this.store.get().memories);
+        if (overlap.duplicate) {
+            return {
+                ok: true,
+                note: "Already remembered in different words, so nothing was added.",
+                memoryId: overlap.duplicate.id,
+                existingText: overlap.duplicate.text,
+                advice: "If your wording is better or adds something, amend that record with orbit_correct_memory instead of writing a second one.",
+            };
+        }
+
         const memory: MemoryNote = {
             id: randomUUID(),
             text: trimmed,
@@ -3224,6 +3276,18 @@ export class Orchestrator {
         this.disk.saveMemories(this.store.get().memories);
         this.log({ kind: "memory.saved", title: trimmed, detail: category });
         this.store.flush();
+
+        // Below the blocking line the write always happens, because a wrong
+        // guess here would lose a fact. Say what it resembles so the next run
+        // can merge the two deliberately with orbit_correct_memory.
+        const resembles =
+            overlap.related.length > 0
+                ? {
+                      resembles: overlap.related.slice(0, 3).map((entry) => ({ id: entry.id, text: entry.text })),
+                      advice: "Stored anyway. If one of these says the same thing, merge them with orbit_correct_memory and orbit_forget the loser.",
+                  }
+                : {};
+
         // Say so, but say the right thing. Storage keeps the sentence whole; a
         // long one is shortened only where it is pasted into a prompt, so the
         // useful advice is about the end of the sentence being the part a
@@ -3233,6 +3297,7 @@ export class Orchestrator {
                 ok: true,
                 memoryId: memory.id,
                 warning: `Stored in full (${trimmed.length} characters), but only the first ${MEMORY_RENDER_CAP} are shown in a prompt, and the rest needs orbit_list_memories to read. Put the qualifying clause early, or shorten it with orbit_correct_memory.`,
+                ...resembles,
             };
         }
         if (clipped.truncated) {
@@ -3240,9 +3305,37 @@ export class Orchestrator {
                 ok: true,
                 memoryId: memory.id,
                 warning: `That was over the ${MEMORY_STORE_CAP} character ceiling and the end was cut. Rewrite it shorter with orbit_correct_memory: a memory is one sentence.`,
+                ...resembles,
             };
         }
-        return { ok: true, memoryId: memory.id };
+        return { ok: true, memoryId: memory.id, ...resembles };
+    }
+
+    /**
+     * Fold one memory into another. See `memory.ts` for why this is safe for an
+     * agent when `forget` is not: the folded sentence is retired into the
+     * survivor's history rather than destroyed.
+     */
+    mergeMemories(
+        keepId: string,
+        foldId: string,
+        text: string | undefined,
+        reason: string | undefined,
+    ): Record<string, unknown> {
+        const outcome = mergeMemoriesIn(this.store.get().memories, keepId, foldId, text, reason, Date.now());
+        if (outcome.error) return { error: outcome.error };
+
+        this.store.update((state) => {
+            state.memories = outcome.memories;
+        });
+        this.disk.saveMemories(this.store.get().memories);
+        this.log({
+            kind: "memory.saved",
+            title: outcome.merged?.text ?? "",
+            detail: `merged ${foldId} into ${keepId}${reason ? `: ${reason}` : ""}`,
+        });
+        this.store.flush();
+        return { ok: true, memoryId: keepId, text: outcome.merged?.text, remaining: outcome.memories.length };
     }
 
     /**

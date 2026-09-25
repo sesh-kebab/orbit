@@ -46,6 +46,13 @@ export const AGENT_TOOL_NAMES: readonly string[] = [
     "orbit_list_memories",
     "orbit_remember",
     "orbit_correct_memory",
+    // Merging two memories that assert the same thing. It sits here on the same
+    // argument as correction rather than with `orbit_forget`: the folded
+    // sentence is retired into the survivor's history, so the record leaves the
+    // active list without leaving the store and the merge can be read back.
+    // Without it, duplicate detection was an observation the nightly reflection
+    // could make and nothing it could act on.
+    "orbit_merge_memories",
     // Read-only context.
     "orbit_list_schedules",
     "orbit_list_leave",

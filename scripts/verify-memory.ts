@@ -19,6 +19,10 @@ import {
     clipMemory,
     correctMemory,
     endsIncomplete,
+    findDuplicatePairs,
+    findMemoryOverlap,
+    memorySimilarity,
+    mergeMemories,
     normaliseCategory,
     rememberedBlock,
     storableMemoryText,
@@ -314,6 +318,111 @@ check(
 check(
     "selection withholds the delete tool",
     !selection.tools.some((tool) => tool.name === "orbit_forget"),
+);
+
+// MARK: - Near-duplicate memories
+//
+// Fixtures are the real sentences from the store on 24 September, because the
+// thresholds were calibrated against exactly these and a synthetic pair would
+// verify the arithmetic rather than the decision.
+
+const dpShort = note("dp-1", 'Dhaivat Pandit goes by "DP": refer to him as DP in drafts, documents and briefings.', "person");
+const dpLong = note("dp-2", 'Dhaivat Pandit goes by "DP"; refer to him as DP in documents (full name only at a first-mention parenthetical).', "person");
+const adoA = note("ado-1", "In leadership-facing documents Seshi does not want individual ADO work items / deliverables called out: that is not up-levelled enough.", "preference");
+const adoB = note("ado-2", "In leadership documents Seshi wants no individual ADO work-item IDs or task-level deliverable names in the body: express work at the scenario level.", "preference");
+const apars = note("apars", "On the xCloud side, Apars Walia is the primary approver for Game Streaming session limits and Lakshey Hooda is his secondary.", "fact");
+const lakshey = note("lakshey", "Lakshey Hooda is a Software Engineer in Xbox Platform Engineering reporting to Saurabh Mittal, and is Apars Walia's secondary for xCloud session-limit approvals.", "fact");
+const unrelated = note("unrelated", "Fresno GA is targeted at 11 November 2026 and is coupled to Project Dandelion.", "project");
+
+check(
+    "a restatement of the same claim is caught as a duplicate",
+    findMemoryOverlap(dpLong.text, [dpShort, unrelated]).duplicate?.id === "dp-1",
+    memorySimilarity(dpShort.text, dpLong.text),
+);
+
+check(
+    "an unrelated memory is not a duplicate of anything",
+    findMemoryOverlap(unrelated.text, [dpShort, apars]).duplicate === undefined,
+);
+
+check(
+    "exact same text still scores as a duplicate",
+    findMemoryOverlap(dpShort.text, [dpShort]).duplicate?.id === "dp-1",
+);
+
+// The pair that cannot be told apart from complementary facts by word overlap.
+// It must NOT be blocked, and it must still be reported.
+const adoReport = findMemoryOverlap(adoB.text, [adoA, unrelated]);
+check("a weaker restatement is not blocked", adoReport.duplicate === undefined);
+check("a weaker restatement is still reported as related", adoReport.related.some((entry) => entry.id === "ado-1"));
+
+const aparsReport = findMemoryOverlap(lakshey.text, [apars, unrelated]);
+check(
+    "two complementary facts about the same people are never blocked",
+    aparsReport.duplicate === undefined,
+    aparsReport,
+);
+
+check(
+    "an empty store has nothing to collide with",
+    findMemoryOverlap(dpShort.text, []).duplicate === undefined &&
+        findMemoryOverlap(dpShort.text, []).related.length === 0,
+);
+
+check(
+    "a memory with no content words scores zero rather than dividing by zero",
+    memorySimilarity("the and of", "to be or not").jaccard === 0,
+);
+
+check(
+    "similarity is symmetric",
+    memorySimilarity(adoA.text, adoB.text).jaccard === memorySimilarity(adoB.text, adoA.text).jaccard,
+);
+
+const pairs = findDuplicatePairs([dpShort, dpLong, adoA, adoB, apars, lakshey, unrelated]);
+check("the existing duplicate pair is found in the store", pairs.some((pair) => pair.likely && pair.a.id === "dp-1" && pair.b.id === "dp-2"), pairs.length);
+check("the unrelated memory pairs with nothing", !pairs.some((pair) => pair.a.id === "unrelated" || pair.b.id === "unrelated"));
+check("the complementary pair is reported but not marked likely", pairs.some((pair) => !pair.likely && [pair.a.id, pair.b.id].includes("apars")));
+check("a store with one memory yields no pairs", findDuplicatePairs([dpShort]).length === 0);
+
+// MARK: - Merging two memories that say the same thing
+
+const storeWithDupes = [dpShort, dpLong, unrelated];
+
+const mergedOut = mergeMemories(storeWithDupes, "dp-1", "dp-2", undefined, "same claim twice", now);
+check("a merge removes the folded memory from the active list", mergedOut.memories.length === 2, mergedOut.error);
+check("a merge keeps the survivor", mergedOut.memories.some((m) => m.id === "dp-1"));
+check("a merge drops the folded id", !mergedOut.memories.some((m) => m.id === "dp-2"));
+check(
+    "the folded sentence survives in the survivor's history, so nothing is destroyed",
+    (mergedOut.merged?.priorText ?? []).some((prior) => prior.text === dpLong.text),
+    mergedOut.merged?.priorText,
+);
+check("the survivor keeps its own wording when no new text is given", mergedOut.merged?.text === dpShort.text);
+check("the survivor keeps its id", mergedOut.merged?.id === "dp-1");
+check("an untouched memory is left alone by a merge", mergedOut.memories.some((m) => m.id === "unrelated"));
+check("the input list is not mutated", storeWithDupes.length === 3);
+
+const reworded = mergeMemories(storeWithDupes, "dp-1", "dp-2", 'Dhaivat Pandit goes by "DP" everywhere.', "merged", now);
+check("a merge can take new wording", reworded.merged?.text === 'Dhaivat Pandit goes by "DP" everywhere.');
+check(
+    "both old wordings are retired when the survivor is reworded",
+    (reworded.merged?.priorText ?? []).some((prior) => prior.text === dpShort.text) &&
+        (reworded.merged?.priorText ?? []).some((prior) => prior.text === dpLong.text),
+);
+
+check("merging a memory into itself is refused", mergeMemories(storeWithDupes, "dp-1", "dp-1", undefined, undefined, now).error !== undefined);
+check("merging an unknown survivor is refused", mergeMemories(storeWithDupes, "nope", "dp-2", undefined, undefined, now).error !== undefined);
+check("merging an unknown loser is refused", mergeMemories(storeWithDupes, "dp-1", "nope", undefined, undefined, now).error !== undefined);
+check("a refused merge changes nothing", mergeMemories(storeWithDupes, "dp-1", "nope", undefined, undefined, now).memories.length === 3);
+check("an empty survivor is refused", mergeMemories(storeWithDupes, "dp-1", "dp-2", "   ", undefined, now).error !== undefined);
+check(
+    "retired wordings stay within the cap",
+    (mergeMemories([{ ...dpShort, priorText: Array.from({ length: 9 }, (_, i) => ({ text: `old ${i}`, retiredAt: now })) }, dpLong], "dp-1", "dp-2", "new wording", undefined, now).merged?.priorText ?? []).length <= PRIOR_TEXT_CAP,
+);
+check(
+    "the merge tool is reachable by an agent",
+    AGENT_TOOL_NAMES.includes("orbit_merge_memories") && !FORBIDDEN_AGENT_TOOL_NAMES.includes("orbit_merge_memories"),
 );
 
 // MARK: - Report
