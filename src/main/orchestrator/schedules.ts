@@ -519,6 +519,44 @@ export function clearBlindRuns(schedule: Schedule): boolean {
 }
 
 /**
+ * What a run must do with a claim it is about to repeat from the last report.
+ *
+ * This is the other half of the baseline block, and without it the first half
+ * is dangerous. "Report only what has changed since then" makes every sentence
+ * in yesterday's report true by default: the run is told to look for deltas,
+ * so anything it does not actively disprove is carried forward as current. A
+ * fresh agent has no way to tell an observation that has since expired from one
+ * that still holds, because both arrive as flat prose in the same block.
+ *
+ * The cost of that is on record. On 13 August the morning briefing led with two
+ * "still open" items and both were phantoms. Dorian was reported out sick; his
+ * note had said "out for the day" about Wednesday only, and he had accepted
+ * Thursday's 1:1 after sending it. Zach's sign-off was reported as waiting on
+ * the user; Zach had asked Evan Chaki. Neither claim was ever checked that
+ * morning. The briefing had copied the previous briefing, and the user caught it
+ * by asking "How do you know Dorian is still sick?".
+ *
+ * That is worse than a missed item, because a briefing is acted on. An omission
+ * costs a look; a confident false claim about a person costs a decision made on
+ * it. So the rule is asymmetric on purpose: a claim that cannot be re-checked
+ * this run is dropped rather than repeated with a hedge. "Possibly still out
+ * sick" is read as "out sick" by someone reading eight lines between meetings.
+ *
+ * It applies only to claims about the world that decay, which is what the
+ * failure was: who is away, who owes what, what is still unresolved. Re-deriving
+ * a settled fact every morning would be waste, and waste is what gets a rule
+ * ignored wholesale.
+ */
+export const CARRIED_CLAIM_RULE = [
+    "That report is what was true then, not what is true now. Anything in it about",
+    "a person, a pending decision, or something still open is a claim that decays:",
+    "check it against its source again this run before you repeat it, and say when",
+    "and where that source was. If you cannot re-check it this run, drop it rather",
+    "than carrying it forward or hedging it. A stale claim stated plainly gets acted",
+    "on, which is worse than not mentioning it.",
+].join("\n");
+
+/**
  * The baseline block handed to a watcher's next run.
  *
  * Every tick spawns a fresh agent, so "tell me what changed" is unanswerable
@@ -547,6 +585,8 @@ export function previousRunBlock(schedule: Schedule): string {
         body,
         "",
         "Use this as your baseline: report only what has changed since then. If nothing meaningful has changed, say so briefly.",
+        "",
+        CARRIED_CLAIM_RULE,
         "</previous_run>",
     ].join("\n");
 }

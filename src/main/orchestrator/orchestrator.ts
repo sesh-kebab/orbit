@@ -1006,7 +1006,7 @@ export class Orchestrator {
                                       texts: [pair.a.text, pair.b.text],
                                       likely: pair.likely,
                                   })),
-                                  advice: "Pairs marked likely are near certainly one claim written twice: merge with orbit_correct_memory, then orbit_forget the loser. The rest may be complementary, so read before merging.",
+                                  advice: "Pairs marked likely are near certainly one claim written twice: fold one into the other with orbit_merge_memories, which keeps the survivor's id and retires the loser's sentence into its history rather than destroying it. The rest may be complementary, so read both before merging: two facts about the same person or project are not duplicates.",
                               }
                             : {}),
                     };
@@ -3279,12 +3279,12 @@ export class Orchestrator {
 
         // Below the blocking line the write always happens, because a wrong
         // guess here would lose a fact. Say what it resembles so the next run
-        // can merge the two deliberately with orbit_correct_memory.
+        // can fold the two together deliberately with orbit_merge_memories.
         const resembles =
             overlap.related.length > 0
                 ? {
                       resembles: overlap.related.slice(0, 3).map((entry) => ({ id: entry.id, text: entry.text })),
-                      advice: "Stored anyway. If one of these says the same thing, merge them with orbit_correct_memory and orbit_forget the loser.",
+                      advice: "Stored anyway. If one of these says the same thing, fold them together with orbit_merge_memories, which retires the folded sentence into the survivor's history rather than destroying it. If they are complementary, keep both.",
                   }
                 : {};
 
