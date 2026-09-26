@@ -10,6 +10,7 @@
  */
 import {
     blindReason,
+    CARRIED_CLAIM_RULE,
     clearBlindRuns,
     dailySlotOn,
     isCouldNotCheck,
@@ -541,6 +542,53 @@ blinded.lastResult = "COULD NOT CHECK — no mail account is signed in.";
 check("a blind run is not handed on as a baseline", previousRunBlock(blinded) === "");
 blinded.lastResult = "Becca is waiting on your approval.";
 check("a real run still is", previousRunBlock(blinded).includes("Becca"));
+
+/**
+ * A baseline that says "report only what has changed" and stops there tells the
+ * next run that everything it does not disprove is still true. That is the
+ * 13 August briefing, which carried "Dorian is out sick" and "Zach is waiting
+ * on you" into a second morning when both had expired, and was believed because
+ * a briefing is acted on rather than checked.
+ *
+ * So the block must carry the re-check rule with it, and must carry it in the
+ * same breath as the delta instruction: the two arriving separately is how the
+ * delta instruction won for six weeks.
+ */
+const carried = previousRunBlock(blinded);
+check("the baseline carries the re-check rule", carried.includes(CARRIED_CLAIM_RULE));
+check("and the rule sits inside the block, not after it", carried.trimEnd().endsWith("</previous_run>"));
+check(
+    "the delta instruction is still there, because that is why the block exists",
+    carried.includes("report only what has changed since then"),
+);
+check(
+    "the rule says to re-check before repeating, not merely to be careful",
+    /check it against its source again this run before you repeat it/.test(CARRIED_CLAIM_RULE),
+);
+check(
+    "it demands the source's date and origin, so a repeated claim is auditable",
+    CARRIED_CLAIM_RULE.replace(/\s+/g, " ").includes("say when and where that source was"),
+);
+check(
+    "an unverifiable claim is dropped rather than hedged",
+    CARRIED_CLAIM_RULE.includes("drop it rather") && CARRIED_CLAIM_RULE.includes("hedging it"),
+);
+check(
+    "it names what decays, rather than asking for everything to be re-derived",
+    ["a person", "a pending decision", "still open"].every((what) => CARRIED_CLAIM_RULE.includes(what)),
+);
+check("no em-dashes reach the user's agents", !CARRIED_CLAIM_RULE.includes("—"));
+
+/**
+ * And a run with no baseline gets no rule: there is nothing to carry forward,
+ * so the instruction would be furniture in a first-run prompt.
+ */
+const firstRun = makeSchedule({
+    title: "Fresh watcher",
+    task: "Watch it.",
+    cadence: { kind: "interval", minutes: 45 },
+});
+check("a watcher that has never run carries no rule", previousRunBlock(firstRun) === "");
 
 /** The orchestrator's decision, stated as it states it. */
 function speaks(status: "done" | "failed" | "cancelled", result: string, firstBlind = true): boolean {

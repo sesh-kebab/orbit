@@ -198,6 +198,81 @@ ok("the orchestrator filters through selectAgentTools", /selectAgentTools\(this\
 // explains why it is absent.
 ok("the agent session leaves availableTools unset", !/^\s*availableTools:/m.test(runner));
 
+// MARK: - Prose must not send an agent at a tool it cannot have
+
+/**
+ * A tool's own words are as binding as its schema, and they drift apart
+ * silently. `orbit_list_memories` returned advice reading "merge with
+ * orbit_correct_memory, then orbit_forget the loser", and `orbit_remember`
+ * said the same on every near-duplicate write. Both were true when written and
+ * became wrong the night `orbit_merge_memories` shipped, because `orbit_forget`
+ * is forbidden to agents on purpose: nothing an agent does to a memory may
+ * destroy it. So two allowlisted tools sent every reader at a tool that is not
+ * in its list, and the fallback for a missing tool is improvisation.
+ *
+ * Nothing went red, because no check ever read the prose. This one does.
+ *
+ * Only prose an agent can actually reach counts. A forbidden tool's own
+ * description may name another forbidden tool: `orbit_cancel_schedule` pointing
+ * at `orbit_update_schedule` is a correct cross-reference that no agent is ever
+ * shown. Scoping by the owning tool is the difference between a check that
+ * fails on real misdirection and one that fails on correct writing, and the
+ * second kind gets deleted rather than fixed.
+ */
+const ownedProse = registered.map((name, index) => {
+    const from = orchestrator.indexOf(`defineTool("${name}"`);
+    const next = registered[index + 1];
+    const to = next ? orchestrator.indexOf(`defineTool("${next}"`) : orchestrator.length;
+    return { name, body: orchestrator.slice(from, to > from ? to : orchestrator.length) };
+});
+ok("every registered tool's body was located", ownedProse.every((entry) => entry.body.length > 0));
+
+// Response advice is written outside the tool body, in the handler's own
+// method, so it is scanned separately: any `advice:` string anywhere in the
+// file reaches whoever called the tool that produced it.
+const adviceStrings = [...orchestrator.matchAll(/advice:\s*(?:\n\s*)?"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
+ok("the advice strings are being read", adviceStrings.length > 0);
+
+const reachable = [
+    ...ownedProse
+        .filter((entry) => allowed.has(entry.name))
+        .flatMap((entry) =>
+            [...entry.body.matchAll(/description:\s*(?:\n\s*)?"((?:[^"\\]|\\.)*)"/g)].map((m) => ({
+                where: entry.name,
+                text: m[1],
+            })),
+        ),
+    ...adviceStrings.map((text) => ({ where: "a tool response", text })),
+];
+ok("agent-reachable prose is actually being read", reachable.length > 10);
+
+const misdirections = FORBIDDEN_AGENT_TOOL_NAMES.flatMap((name) =>
+    reachable.filter((entry) => entry.text.includes(name)).map((entry) => `${name} named by ${entry.where}`),
+);
+check("no prose an agent can read points it at a forbidden tool", misdirections, []);
+
+// And the positive half: the advice that replaced it names the tool that does
+// exist, so the pairs it reports are actionable rather than just observed.
+const duplicateAdvice = adviceStrings.find((line) => line.includes("written twice"));
+ok("the duplicate-pair advice is still there", duplicateAdvice !== undefined);
+ok(
+    "and it points at the tool an agent actually has",
+    duplicateAdvice !== undefined && duplicateAdvice.includes("orbit_merge_memories"),
+);
+ok(
+    "and it warns that complementary records are not duplicates",
+    duplicateAdvice !== undefined && duplicateAdvice.includes("not duplicates"),
+);
+
+// The same advice is given at write time, where the near-duplicate is first
+// noticed. That is the one a live agent hits most often.
+const atWrite = adviceStrings.find((line) => line.startsWith("Stored anyway"));
+ok("a near-duplicate write still says what it resembles", atWrite !== undefined);
+ok(
+    "and sends the writer at the non-destructive tool",
+    atWrite !== undefined && atWrite.includes("orbit_merge_memories"),
+);
+
 // MARK: - Report
 
 const preamble = readFileSync(join(here, "persona.ts"), "utf8");
