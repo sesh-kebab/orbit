@@ -19,6 +19,7 @@ import {
     clipMemory,
     correctMemory,
     endsIncomplete,
+    findIncompleteMemories,
     findDuplicatePairs,
     findMemoryOverlap,
     memorySimilarity,
@@ -273,6 +274,29 @@ check(
     "and the reader is not sent looking for words that are gone",
     !legacyBlock.includes("shortened here, not lost"),
 );
+
+// MARK: - Naming the cut records, not just counting them (26 September 2026)
+
+/**
+ * The warning above says "some memories below were cut short". It has been true
+ * every night since it shipped and has repaired nothing, because it never says
+ * which. On 25 September 32 of 58 records were incomplete and two got fixed, as
+ * a side effect of a merge. So the list call names them individually, which is
+ * the only call that can act on one.
+ */
+const wholeOne: MemoryNote = { id: "whole", category: "fact", text: "Apars Walia approves session limits.", createdAt: now };
+const report = findIncompleteMemories([legacy, wholeOne]);
+check("the cut record is named by id", report?.ids.join(",") === "legacy", JSON.stringify(report?.ids));
+check("a whole one is not accused", !(report?.ids ?? []).includes("whole"));
+check("the count is stated against the total", report?.advice.includes("1 of 2 memories") === true, report?.advice);
+check("guessing the missing clause is forbidden outright", report?.advice.includes("Never complete one by guessing") === true);
+check("repair names the tool that can do it", report?.advice.includes("orbit_correct_memory") === true);
+check(
+    "and it does not send anyone to read words that are gone",
+    !(report?.advice ?? "").includes("orbit_list_memories"),
+);
+check("a store with nothing cut says nothing", findIncompleteMemories([wholeOne]) === undefined);
+check("an empty store says nothing either", findIncompleteMemories([]) === undefined);
 
 // MARK: - The memory that arrived with no category at all (17 September 2026)
 

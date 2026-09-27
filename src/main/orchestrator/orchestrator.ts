@@ -92,7 +92,7 @@ import {
 } from "./selfPrompt.js";
 import { needsSoulStep, soulBlock, soulEntry, withSoulStep } from "./soul.js";
 import { checkDesignRevision } from "./design.js";
-import { correctMemory as applyMemoryCorrection, mergeMemories as mergeMemoriesIn, storableMemoryText, normaliseCategory, rememberedBlock, findMemoryOverlap, findDuplicatePairs, MEMORY_RENDER_CAP, MEMORY_STORE_CAP, type MemoryCorrection } from "./memory.js";
+import { correctMemory as applyMemoryCorrection, mergeMemories as mergeMemoriesIn, storableMemoryText, normaliseCategory, rememberedBlock, findMemoryOverlap, findDuplicatePairs, findIncompleteMemories, MEMORY_RENDER_CAP, MEMORY_STORE_CAP, type MemoryCorrection } from "./memory.js";
 import { deriveBoard } from "./board.js";
 import { describeMiss, findById } from "./ids.js";
 import {
@@ -985,18 +985,27 @@ export class Orchestrator {
             }),
 
             defineTool("orbit_list_memories", {
-                description: "List everything you currently remember about the user.",
+                description:
+                    "List everything you currently remember about the user. A record marked incomplete was cut before it was stored, so the end of that sentence is gone: repair it from primary evidence with orbit_correct_memory rather than guessing what it said.",
                 skipPermission: true,
                 parameters: z.object({}),
                 handler: async () => {
                     const memories = this.store.get().memories;
                     const pairs = findDuplicatePairs(memories);
+                    const incomplete = findIncompleteMemories(memories);
+                    const cut = new Set(incomplete?.ids ?? []);
                     return {
                         memories: memories.map((memory) => ({
                             id: memory.id,
                             text: memory.text,
                             category: normaliseCategory(memory.category),
+                            // Only on the records it is true of. A field on every
+                            // row is furniture, and furniture is not read.
+                            ...(cut.has(memory.id) ? { incomplete: true } : {}),
                         })),
+                        ...(incomplete
+                            ? { incompleteCount: incomplete.ids.length, repairAdvice: incomplete.advice }
+                            : {}),
                         // Absence is the normal case, so say nothing when there
                         // is nothing. A field that is always present is furniture.
                         ...(pairs.length > 0
