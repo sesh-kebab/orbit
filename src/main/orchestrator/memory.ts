@@ -414,6 +414,49 @@ export function correctMemory(
 }
 
 /**
+ * The records that were cut before they were stored, and what to do about them.
+ *
+ * `rememberedBlock` already warns that some memories in a prompt end
+ * mid-thought, and that warning is the whole of what a reader gets: it says
+ * some, never which. So every line in the list is suspect and none is
+ * actionable, which is the worst of both. On 25 September 32 of 58 records were
+ * in this state, and the two that got repaired that night were repaired by
+ * accident, as a side effect of merging a duplicate pair.
+ *
+ * The fix is not another warning. It is naming them, on the one call that can
+ * act on them. `orbit_list_memories` already knows the full text of every
+ * record, so it can mark the incomplete ones individually and say what repair
+ * means: re-derive the claim from primary evidence and rewrite it whole, or
+ * retire it when the evidence cannot be found again. The difference is between
+ * "over half of what you know may be wrong" and "these nine are, here they are,
+ * fix three".
+ *
+ * Note the deliberate asymmetry with the truncation notice in a prompt. There,
+ * a clipped memory is recoverable and the advice is to go and read the rest.
+ * Here the rest does not exist, so guessing the missing clause is the failure
+ * mode and the advice has to forbid it outright.
+ */
+export interface IncompleteMemoryReport {
+    ids: string[];
+    advice: string;
+}
+
+export function findIncompleteMemories(memories: readonly MemoryNote[]): IncompleteMemoryReport | undefined {
+    const ids = memories.filter((memory) => endsIncomplete(memory.text)).map((memory) => memory.id);
+    if (ids.length === 0) return undefined;
+    return {
+        ids,
+        advice:
+            `${ids.length} of ${memories.length} memories are marked incomplete: they were cut before they were stored, ` +
+            "so the words after the cut are gone and cannot be read back from anywhere. Never complete one by guessing, " +
+            "because the clause that was lost is usually the qualifier that made the claim true. Repair a few at a time: " +
+            "go back to the primary evidence, work out what the whole sentence should have said, and rewrite it with " +
+            "orbit_correct_memory. Where the evidence cannot be found again, rewrite the memory down to the part still " +
+            "supported rather than leaving a sentence that stops mid-thought.",
+    };
+}
+
+/**
  * Every pair in the store that looks like the same claim written twice.
  *
  * The write-time guard can only stop new duplicates. The ones already on disk
