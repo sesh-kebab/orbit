@@ -351,6 +351,28 @@ export interface MemoryNote {
      * an agent when deleting is not.
      */
     priorText?: RetiredMemoryText[];
+    /**
+     * Records this one has been read against and judged a different claim, so
+     * the pair stops being offered as a possible duplicate.
+     *
+     * Written to both sides of a pair, and each side keeps the other's wording
+     * as it stood when the judgement was made. That is what makes the judgement
+     * expire honestly: it was about two specific sentences, so if either is
+     * later corrected the pair is compared again rather than staying suppressed
+     * on the strength of a reading of words that no longer exist.
+     */
+    distinctFrom?: DistinctJudgement[];
+}
+
+/** One "these two are different claims" judgement, from the holder's side. */
+export interface DistinctJudgement {
+    /** The other record in the pair. */
+    id: string;
+    /** That record's text when the judgement was made. */
+    theirText: string;
+    at: number;
+    /** Why they are different claims, for whoever reads this next. */
+    reason?: string;
 }
 
 /**

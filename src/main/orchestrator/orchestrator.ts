@@ -92,7 +92,7 @@ import {
 } from "./selfPrompt.js";
 import { needsSoulStep, soulBlock, soulEntry, withSoulStep } from "./soul.js";
 import { checkDesignRevision } from "./design.js";
-import { correctMemory as applyMemoryCorrection, mergeMemories as mergeMemoriesIn, storableMemoryText, normaliseCategory, rememberedBlock, findMemoryOverlap, findDuplicatePairs, findIncompleteMemories, MEMORY_RENDER_CAP, MEMORY_STORE_CAP, type MemoryCorrection } from "./memory.js";
+import { correctMemory as applyMemoryCorrection, mergeMemories as mergeMemoriesIn, keepMemoriesDistinct as keepMemoriesDistinctIn, storableMemoryText, normaliseCategory, rememberedBlock, findMemoryOverlap, findDuplicatePairs, findIncompleteMemories, MEMORY_RENDER_CAP, MEMORY_STORE_CAP, type MemoryCorrection } from "./memory.js";
 import { deriveBoard } from "./board.js";
 import { describeMiss, findById } from "./ids.js";
 import {
@@ -1015,7 +1015,7 @@ export class Orchestrator {
                                       texts: [pair.a.text, pair.b.text],
                                       likely: pair.likely,
                                   })),
-                                  advice: "Pairs marked likely are near certainly one claim written twice: fold one into the other with orbit_merge_memories, which keeps the survivor's id and retires the loser's sentence into its history rather than destroying it. The rest may be complementary, so read both before merging: two facts about the same person or project are not duplicates.",
+                                  advice: "Pairs marked likely are near certainly one claim written twice: fold one into the other with orbit_merge_memories, which keeps the survivor's id and retires the loser's sentence into its history rather than destroying it. The rest may be complementary, so read both before merging: two facts about the same person or project are not duplicates. Whichever way you decide, record it: merge it, or call orbit_keep_memories_distinct so the pair is not offered again. A pair you read and leave alone comes back tomorrow unchanged.",
                               }
                             : {}),
                     };
@@ -1060,6 +1060,21 @@ export class Orchestrator {
                 }),
                 handler: async ({ keepId, foldId, text, reason }) =>
                     this.mergeMemories(keepId, foldId, text, reason),
+            }),
+
+            defineTool("orbit_keep_memories_distinct", {
+                description:
+                    "Record that two memories orbit_list_memories offered as possible duplicates are actually different claims, so the pair stops being offered. Use it whenever you read a pair and decide against merging: two facts about the same person or project are not duplicates, and without this the pair comes back every night. Nothing is changed or destroyed, this only records the reading, and the pair is offered again if either memory is later corrected.",
+                skipPermission: true,
+                parameters: z.object({
+                    idA: z.string().describe("One memory in the pair, from orbit_list_memories."),
+                    idB: z.string().describe("The other memory in the pair."),
+                    reason: z
+                        .string()
+                        .optional()
+                        .describe("What makes them different claims, in a few words. Kept against both records."),
+                }),
+                handler: async ({ idA, idB, reason }) => this.keepMemoriesDistinct(idA, idB, reason),
             }),
 
             defineTool("orbit_forget", {
@@ -3345,6 +3360,35 @@ export class Orchestrator {
         });
         this.store.flush();
         return { ok: true, memoryId: keepId, text: outcome.merged?.text, remaining: outcome.memories.length };
+    }
+
+    /**
+     * Record that a near-identical pair is two different claims.
+     *
+     * Safe for an agent on the same argument as a merge, and more so: a merge
+     * at least moves a sentence out of the active list, while this changes no
+     * wording at all. It writes down a reading so the next reader does not have
+     * to repeat it.
+     */
+    keepMemoriesDistinct(idA: string, idB: string, reason: string | undefined): Record<string, unknown> {
+        const outcome = keepMemoriesDistinctIn(this.store.get().memories, idA, idB, reason, Date.now());
+        if (outcome.error) return { error: outcome.error };
+
+        this.store.update((state) => {
+            state.memories = outcome.memories;
+        });
+        this.disk.saveMemories(this.store.get().memories);
+        this.log({
+            kind: "memory.saved",
+            title: outcome.kept?.[0].text ?? "",
+            detail: `kept distinct from ${idB}${reason ? `: ${reason}` : ""}`,
+        });
+        this.store.flush();
+        return {
+            ok: true,
+            ids: [idA, idB],
+            note: "Recorded. This pair will not be offered again unless either memory is corrected.",
+        };
     }
 
     /**

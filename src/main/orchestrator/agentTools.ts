@@ -53,6 +53,13 @@ export const AGENT_TOOL_NAMES: readonly string[] = [
     // Without it, duplicate detection was an observation the nightly reflection
     // could make and nothing it could act on.
     "orbit_merge_memories",
+    // Recording that a near-identical pair is two different claims. Strictly
+    // weaker than the merge above: it changes no wording and retires nothing,
+    // it writes down a reading. It is here because merging was the only
+    // resolution on offer, so a pair correctly judged *not* a duplicate had
+    // nowhere to put that answer and came back every night until the list
+    // taught its only reader to skip it.
+    "orbit_keep_memories_distinct",
     // Read-only context.
     "orbit_list_schedules",
     "orbit_list_leave",
