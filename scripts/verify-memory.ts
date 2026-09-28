@@ -10,6 +10,7 @@
 import { AGENT_TOOL_NAMES, FORBIDDEN_AGENT_TOOL_NAMES, selectAgentTools } from "../src/main/orchestrator/agentTools.js";
 import {
     DEFAULT_MEMORY_CATEGORY,
+    DISTINCT_CAP,
     MEMORY_CATEGORIES,
     MEMORY_CONTEXT_CAP,
     MEMORY_RENDER_CAP,
@@ -22,6 +23,8 @@ import {
     findIncompleteMemories,
     findDuplicatePairs,
     findMemoryOverlap,
+    judgedDistinct,
+    keepMemoriesDistinct,
     memorySimilarity,
     mergeMemories,
     normaliseCategory,
@@ -447,6 +450,61 @@ check(
 check(
     "the merge tool is reachable by an agent",
     AGENT_TOOL_NAMES.includes("orbit_merge_memories") && !FORBIDDEN_AGENT_TOOL_NAMES.includes("orbit_merge_memories"),
+);
+
+// MARK: - Keeping a pair distinct
+
+const distinctBase = [adoA, adoB, dpShort, dpLong];
+check("the complementary pair is offered before anyone reads it", findDuplicatePairs(distinctBase).some((pair) => [pair.a.id, pair.b.id].includes(adoA.id) && [pair.a.id, pair.b.id].includes(adoB.id)));
+
+const judged = keepMemoriesDistinct(distinctBase, adoA.id, adoB.id, "two facts about one project", now);
+check("judging a pair distinct succeeds", judged.error === undefined && judged.kept !== undefined);
+check("the judgement is written to both sides", (judged.memories.find((m) => m.id === adoA.id)?.distinctFrom ?? []).some((j) => j.id === adoB.id) && (judged.memories.find((m) => m.id === adoB.id)?.distinctFrom ?? []).some((j) => j.id === adoA.id));
+check("neither wording changes", judged.memories.find((m) => m.id === adoA.id)?.text === adoA.text && judged.memories.find((m) => m.id === adoB.id)?.text === adoB.text);
+check("nothing is retired", (judged.memories.find((m) => m.id === adoA.id)?.priorText ?? []).length === 0);
+check("the reason is kept", (judged.memories.find((m) => m.id === adoA.id)?.distinctFrom ?? [])[0]?.reason === "two facts about one project");
+check(
+    "a judged pair is no longer offered",
+    !findDuplicatePairs(judged.memories).some((pair) => [pair.a.id, pair.b.id].includes(adoA.id) && [pair.a.id, pair.b.id].includes(adoB.id)),
+);
+check(
+    "judging one pair does not suppress another",
+    findDuplicatePairs(judged.memories).some((pair) => [pair.a.id, pair.b.id].includes(dpShort.id) && [pair.a.id, pair.b.id].includes(dpLong.id)),
+);
+
+// A judgement is a reading of two sentences, so it must not outlive them.
+const afterCorrection = correctMemory(judged.memories, adoB.id, { text: `${adoB.text} Revised on a later reading.` }, now + 1).memories;
+check(
+    "correcting one side puts the pair back on the list",
+    findDuplicatePairs(afterCorrection).some((pair) => [pair.a.id, pair.b.id].includes(adoA.id) && [pair.a.id, pair.b.id].includes(adoB.id)),
+);
+
+const halfJudged = judged.memories.map((m) => (m.id === adoB.id ? { ...m, distinctFrom: [] } : m));
+check("a one-sided judgement suppresses nothing", findDuplicatePairs(halfJudged).some((pair) => [pair.a.id, pair.b.id].includes(adoA.id) && [pair.a.id, pair.b.id].includes(adoB.id)));
+check(
+    "judgedDistinct agrees with what the pair list does",
+    judgedDistinct(judged.memories.find((m) => m.id === adoA.id)!, judged.memories.find((m) => m.id === adoB.id)!) &&
+        !judgedDistinct(adoA, adoB),
+);
+
+check("judging a memory against itself is refused", keepMemoriesDistinct(distinctBase, adoA.id, adoA.id, undefined, now).error !== undefined);
+check("judging an unknown memory is refused", keepMemoriesDistinct(distinctBase, adoA.id, "nope", undefined, now).error !== undefined);
+check("a refused judgement changes nothing", keepMemoriesDistinct(distinctBase, adoA.id, "nope", undefined, now).memories.every((m, i) => m === distinctBase[i]));
+check("re-judging the same pair does not stack duplicates", (keepMemoriesDistinct(judged.memories, adoA.id, adoB.id, "again", now + 2).memories.find((m) => m.id === adoA.id)?.distinctFrom ?? []).filter((j) => j.id === adoB.id).length === 1);
+check(
+    "judgements stay within the cap",
+    (keepMemoriesDistinct(
+        [{ ...adoA, distinctFrom: Array.from({ length: DISTINCT_CAP + 5 }, (_, i) => ({ id: `other-${i}`, theirText: "x", at: now })) }, adoB],
+        adoA.id,
+        adoB.id,
+        undefined,
+        now,
+    ).memories.find((m) => m.id === adoA.id)?.distinctFrom ?? []).length <= DISTINCT_CAP,
+);
+check(
+    "the distinct tool is reachable by an agent",
+    AGENT_TOOL_NAMES.includes("orbit_keep_memories_distinct") &&
+        !FORBIDDEN_AGENT_TOOL_NAMES.includes("orbit_keep_memories_distinct"),
 );
 
 // MARK: - Report

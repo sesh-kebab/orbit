@@ -478,6 +478,7 @@ export function findDuplicatePairs(memories: MemoryNote[]): DuplicatePair[] {
         for (let j = i + 1; j < memories.length; j += 1) {
             const similarity = memorySimilarity(memories[i].text, memories[j].text);
             if (similarity.jaccard < RELATED_JACCARD && similarity.containment < RELATED_CONTAINMENT) continue;
+            if (judgedDistinct(memories[i], memories[j])) continue;
             pairs.push({
                 a: { id: memories[i].id, text: memories[i].text, similarity },
                 b: { id: memories[j].id, text: memories[j].text, similarity },
@@ -487,6 +488,82 @@ export function findDuplicatePairs(memories: MemoryNote[]): DuplicatePair[] {
         }
     }
     return pairs.sort((x, y) => y.a.similarity.containment - x.a.similarity.containment);
+}
+
+/**
+ * Has this pair already been read and found to be two different claims?
+ *
+ * Both sides have to still agree, and each side's agreement is checked against
+ * the wording it was given. A judgement is a reading of two sentences, so it
+ * only survives while both sentences say what they said: correcting either one
+ * puts the pair back in front of the next reader instead of leaving it
+ * suppressed by a decision taken about different words.
+ *
+ * Requiring both sides also means a half-written judgement, one record updated
+ * and the other not, suppresses nothing. It fails towards showing the pair,
+ * which is the direction that costs a second read rather than a lost duplicate.
+ */
+export function judgedDistinct(a: MemoryNote, b: MemoryNote): boolean {
+    const held = (from: MemoryNote, about: MemoryNote): boolean =>
+        (from.distinctFrom ?? []).some((judgement) => judgement.id === about.id && same(judgement.theirText, about.text));
+    return held(a, b) && held(b, a);
+}
+
+/** How many distinct-judgements one record keeps before dropping the oldest. */
+export const DISTINCT_CAP = 20;
+
+export interface DistinctOutcome {
+    memories: MemoryNote[];
+    kept?: [MemoryNote, MemoryNote];
+    error?: string;
+}
+
+/**
+ * Record that two near-identical memories are genuinely different claims.
+ *
+ * `findDuplicatePairs` cannot tell "the same fact written twice" from "two
+ * facts about the same project", and it is not supposed to: that reading needs
+ * a reader. But until tonight the reader had nowhere to put the answer. Merging
+ * was the only resolution on offer, so a pair correctly judged *not* a
+ * duplicate stayed on the list and came back the next night, and the night
+ * after. On 27 September all three pairs on offer were complementary, and all
+ * three had been re-read and re-rejected on previous nights.
+ *
+ * That is the same failure the incomplete-memory warning had before it named
+ * its records: a list that cannot be acted on is re-read forever and teaches
+ * the reader to skip it, which costs the one duplicate that was real. So the
+ * judgement gets somewhere to live. Nothing is destroyed and no wording
+ * changes: this records a reading, and both records stay exactly as they were.
+ */
+export function keepMemoriesDistinct(
+    memories: readonly MemoryNote[],
+    idA: string,
+    idB: string,
+    reason: string | undefined,
+    now: number,
+): DistinctOutcome {
+    const all = [...memories];
+    if (idA === idB) {
+        return { memories: all, error: "Those are the same memory. Judging a pair needs two different ids." };
+    }
+    const indexA = findIndexById(all, idA);
+    if (indexA === -1) return { memories: all, error: describeMiss(findById(all, idA), "memory") };
+    const indexB = findIndexById(all, idB);
+    if (indexB === -1) return { memories: all, error: describeMiss(findById(all, idB), "memory") };
+
+    const note = (from: MemoryNote, about: MemoryNote): MemoryNote => ({
+        ...from,
+        distinctFrom: [
+            ...(from.distinctFrom ?? []).filter((judgement) => judgement.id !== about.id),
+            { id: about.id, theirText: about.text, at: now, ...(reason ? { reason } : {}) },
+        ].slice(-DISTINCT_CAP),
+    });
+
+    const a = all[indexA];
+    const b = all[indexB];
+    all[indexA] = note(a, b);
+    all[indexB] = note(b, a);
+    return { memories: all, kept: [all[indexA], all[indexB]] };
 }
 
 /**
