@@ -1588,7 +1588,7 @@ export class Orchestrator {
 
         try {
             if (process.env.ORBIT_DEBUG === "1") console.log("[orbit] sending:", forModel.slice(0, 60));
-            const id = await this.orbit.send({ prompt: forModel });
+            const id = await this.orbit.send({ prompt: forModel, source: "user" });
             if (process.env.ORBIT_DEBUG === "1") console.log("[orbit] queued message", id);
         } catch (error) {
             if (process.env.ORBIT_DEBUG === "1") console.error("[orbit] send failed", error);
@@ -2257,12 +2257,19 @@ export class Orchestrator {
         this.notifyOrbit(note);
     }
 
+    /**
+     * Everything that reaches Orbit unprompted goes out as `system`: a finished
+     * agent, a meeting about to start, a watcher firing, a chase loop. None of
+     * it was typed by the user, and Orbit's whole outbound doctrine rests on
+     * never reading its own input as human authorisation. Left unset these
+     * arrived on the wire indistinguishable from something the user said.
+     */
     private notifyOrbit(note: string): void {        if (!this.orbit) return;
         this.store.update((state) => {
             state.orbitBusy = true;
             state.orbitActivity = "catching up";
         });
-        void this.orbit.send({ prompt: note, mode: "enqueue" }).catch(() => {
+        void this.orbit.send({ prompt: note, mode: "enqueue", source: "system" }).catch(() => {
             this.store.update((state) => {
                 state.orbitBusy = false;
             });

@@ -11,6 +11,8 @@
  * Everything here is pure. No Electron, no network, no real mailbox.
  */
 import type { PermissionRequest } from "@github/copilot-sdk";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
     autoDecide,
     describePermission,
@@ -254,6 +256,67 @@ check(
 check(
     "and tells the agent to stop rather than report afterwards",
     agentBrief.includes("ask_user") && agentBrief.includes("afterwards is not good"),
+);
+
+// ── Message provenance ───────────────────────────────────────────────────────
+//
+// The SDK gained typed message provenance in 1.0.14. Until Orbit set it, every
+// notice it pushed into its own session, and every follow-up it pushed into an
+// agent's, arrived on the wire looking exactly like something the user typed.
+// Orbit's outbound doctrine rests on never reading its own input as human
+// authorisation, so an unlabelled send is a safety bug rather than an untidy one.
+// These checks are source-level on purpose: the point is that a call site added
+// later cannot quietly omit provenance.
+
+const orchestratorSrc = readFileSync(
+    join(process.cwd(), "src/main/orchestrator/orchestrator.ts"),
+    "utf8",
+);
+const runnerSrc = readFileSync(join(process.cwd(), "src/main/orchestrator/agentRunner.ts"), "utf8");
+
+const SEND_SITE = /\.(?:send|sendAndWait)\(\s*\{([^}]*)\}/g;
+
+function sendSites(source: string): string[] {
+    return [...source.matchAll(SEND_SITE)].map((m) => m[1]);
+}
+
+const allSites = [...sendSites(orchestratorSrc), ...sendSites(runnerSrc)];
+
+check("every session send site is found", allSites.length === 4, allSites.length);
+check(
+    "every session send site declares its provenance",
+    allSites.every((site) => /\bsource:/.test(site)),
+    allSites.filter((site) => !/\bsource:/.test(site)),
+);
+check(
+    "a send only ever claims to be the user, the app, or a named agent",
+    allSites.every((site) => {
+        const found = /\bsource:\s*"([^"]+)"/.exec(site);
+        if (found === null) return false;
+        return ["user", "system"].includes(found[1]) || found[1].startsWith("agent-");
+    }),
+    allSites,
+);
+check(
+    "what the user actually typed still goes out as user input",
+    /this\.orbit\.send\(\{\s*prompt:\s*forModel,\s*source:\s*"user"\s*\}\)/.test(orchestratorSrc),
+);
+check(
+    "Orbit's own unprompted notices go out as system, not as the user",
+    /prompt:\s*note,\s*mode:\s*"enqueue",\s*source:\s*"system"/.test(orchestratorSrc),
+);
+check(
+    "an agent's task brief is application-generated",
+    /source:\s*"system"/.test(runnerSrc),
+);
+check(
+    "a follow-up to an agent is attributed to Orbit, not to the user",
+    /prompt:\s*text,\s*mode:\s*"enqueue",\s*source:\s*"agent-orbit"/.test(runnerSrc),
+);
+check(
+    "only the site relaying a human may claim to be the user",
+    allSites.filter((site) => /\bsource:\s*"user"/.test(site)).length === 1,
+    allSites.filter((site) => /\bsource:\s*"user"/.test(site)),
 );
 
 // ── Report ───────────────────────────────────────────────────────────────────
