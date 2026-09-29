@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { app } from "electron";
 import {
     CopilotClient,
     RuntimeConnection,
@@ -322,6 +323,14 @@ export class Orchestrator {
                 logLevel: "error",
                 workingDirectory: settings.workspace,
                 connection: RuntimeConnection.forStdio({ path: cli.path }),
+                // Orbit connects over the user's own signed-in CLI, so without
+                // this every trace it generates is attributed to the runtime's
+                // build and is indistinguishable from anything else on the
+                // machine using the same CLI.
+                clientInfo: {
+                    applicationName: "orbit",
+                    applicationVersion: app.getVersion(),
+                },
             });
             await this.client.start();
             await this.requireAuth();
