@@ -123,7 +123,10 @@ export class AgentRunner {
             this.armWatchdog(settings.agentTimeoutMinutes);
 
             const final = await session.sendAndWait(
-                { prompt: buildAgentPrompt(this.agent.task, this.hooks.getDesignLanguage(), this.hooks.getRemembered()) },
+                {
+                    prompt: buildAgentPrompt(this.agent.task, this.hooks.getDesignLanguage(), this.hooks.getRemembered()),
+                    source: "system",
+                },
                 AGENT_IDLE_TIMEOUT_MS,
             );
 
@@ -180,10 +183,16 @@ export class AgentRunner {
         );
     }
 
-    /** Send a follow-up message to an agent that is already running or idle. */
+    /**
+     * Send a follow-up message to an agent that is already running or idle.
+     *
+     * This reaches the agent from Orbit, via the `orbit_message_agent` tool,
+     * never from the user directly, so it is stamped as an identified agent
+     * sender rather than as human input.
+     */
     async message(text: string): Promise<void> {
         if (!this.session) throw new Error("agent is not running yet");
-        await this.session.send({ prompt: text, mode: "enqueue" });
+        await this.session.send({ prompt: text, mode: "enqueue", source: "agent-orbit" });
         this.hooks.patch(this.agent.id, (a) => {
             a.lastActivityAt = Date.now();
             pushStep(a, { kind: "note", label: "got a follow-up from Orbit" });

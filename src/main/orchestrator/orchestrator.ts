@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { app } from "electron";
 import {
     CopilotClient,
     RuntimeConnection,
@@ -322,6 +323,14 @@ export class Orchestrator {
                 logLevel: "error",
                 workingDirectory: settings.workspace,
                 connection: RuntimeConnection.forStdio({ path: cli.path }),
+                // Orbit connects over the user's own signed-in CLI, so without
+                // this every trace it generates is attributed to the runtime's
+                // build and is indistinguishable from anything else on the
+                // machine using the same CLI.
+                clientInfo: {
+                    applicationName: "orbit",
+                    applicationVersion: app.getVersion(),
+                },
             });
             await this.client.start();
             await this.requireAuth();
@@ -1588,7 +1597,7 @@ export class Orchestrator {
 
         try {
             if (process.env.ORBIT_DEBUG === "1") console.log("[orbit] sending:", forModel.slice(0, 60));
-            const id = await this.orbit.send({ prompt: forModel });
+            const id = await this.orbit.send({ prompt: forModel, source: "user" });
             if (process.env.ORBIT_DEBUG === "1") console.log("[orbit] queued message", id);
         } catch (error) {
             if (process.env.ORBIT_DEBUG === "1") console.error("[orbit] send failed", error);
@@ -2257,12 +2266,19 @@ export class Orchestrator {
         this.notifyOrbit(note);
     }
 
+    /**
+     * Everything that reaches Orbit unprompted goes out as `system`: a finished
+     * agent, a meeting about to start, a watcher firing, a chase loop. None of
+     * it was typed by the user, and Orbit's whole outbound doctrine rests on
+     * never reading its own input as human authorisation. Left unset these
+     * arrived on the wire indistinguishable from something the user said.
+     */
     private notifyOrbit(note: string): void {        if (!this.orbit) return;
         this.store.update((state) => {
             state.orbitBusy = true;
             state.orbitActivity = "catching up";
         });
-        void this.orbit.send({ prompt: note, mode: "enqueue" }).catch(() => {
+        void this.orbit.send({ prompt: note, mode: "enqueue", source: "system" }).catch(() => {
             this.store.update((state) => {
                 state.orbitBusy = false;
             });

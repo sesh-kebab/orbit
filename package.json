@@ -2,7 +2,7 @@
     "name": "orbit",
     "productName": "Orbit",
     "version": "0.3.0",
-    "description": "Orbit \u2014 an expressive desktop AI companion that orchestrates Copilot agents",
+    "description": "Orbit — an expressive desktop AI companion that orchestrates Copilot agents",
     "main": "./out/main/index.js",
     "type": "module",
     "author": {
@@ -66,7 +66,7 @@
         "verify:checkout": "esbuild scripts/verify-checkout.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/verify-checkout.mjs --log-level=warning && node node_modules/.cache/verify-checkout.mjs"
     },
     "dependencies": {
-        "@github/copilot-sdk": "^1.0.8",
+        "@github/copilot-sdk": "^1.0.15",
         "zod": "^4.3.6"
     },
     "devDependencies": {
