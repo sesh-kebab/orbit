@@ -115,6 +115,7 @@ import {
     catchUpDecision,
     clearBackoff,
     clearBlindRuns,
+    clearMissedSlots,
     blindReason,
     describeCadence,
     describeSchedule,
@@ -129,6 +130,7 @@ import {
     makeSchedule,
     nextAllowedRunFor,
     noteBlindRun,
+    noteMissedSlot,
     noteQuietRun,
     previousRunBlock,
     ranSlot,
@@ -823,7 +825,7 @@ export class Orchestrator {
 
             defineTool("orbit_list_schedules", {
                 description:
-                    "List the standing watchers and what they last reported. A watcher that keeps finding nothing eases off on its own; the cadence shown says so, and it snaps back the moment it has news. Archived watchers — including one-offs that have already fired — are left out unless asked for.",
+                    "List the standing watchers and what they last reported. A watcher that keeps finding nothing eases off on its own; the cadence shown says so, and it snaps back the moment it has news. A watcher showing missed slots is a different thing entirely: it never looked, because nothing was running to run it, so treat that as an outage to report rather than as a quiet spell. Archived watchers — including one-offs that have already fired — are left out unless asked for.",
                 skipPermission: true,
                 parameters: z.object({
                     includeArchived: z
@@ -846,6 +848,7 @@ export class Orchestrator {
                             archived: isArchived(schedule),
                             runCount: schedule.runCount,
                             quietRuns: schedule.quietRuns ?? 0,
+                            missedSlots: schedule.missedSlots ?? 0,
                             backedOff: isBackedOff(schedule),
                             nextRun: isRunnable(schedule)
                                 ? new Date(schedule.nextRunAt).toLocaleString()
@@ -2645,6 +2648,10 @@ export class Orchestrator {
             // Only a run fired *for* a slot discharges it. A manual nudge has
             // no slot, so it leaves the day's scheduled run still owing.
             if (options.slotAt !== undefined) target.lastSlotAt = options.slotAt;
+            // A slot actually served ends the outage. Cleared on any run, not
+            // just a scheduled one: a manual nudge still proves something is
+            // running, which is the only thing the counter was asserting.
+            clearMissedSlots(target);
             target.runCount += 1;
             target.activeAgentId = agentId;
             // A one-off is spent the moment it fires: `runCount` now marks it
@@ -2693,7 +2700,16 @@ export class Orchestrator {
             const decision = catchUpDecision(schedule, now);
             this.store.update((state) => {
                 const target = state.schedules.find((s) => s.id === schedule.id);
-                if (target) target.nextRunAt = decision.nextRunAt;
+                if (!target) return;
+                target.nextRunAt = decision.nextRunAt;
+                // A slot this watcher was owed, that nothing was running to
+                // serve. Recorded here because declining it is correct and
+                // silence about having declined it is not: an assistant that
+                // was dark for two days otherwise looks exactly like one that
+                // had nothing to say.
+                if (decision.missed && decision.slotAt !== undefined) {
+                    noteMissedSlot(target, decision.slotAt);
+                }
             });
             if (decision.run) due.push({ id: schedule.id, slotAt: decision.slotAt });
         }

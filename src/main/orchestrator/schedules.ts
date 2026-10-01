@@ -287,7 +287,7 @@ export function dailySlotOn(cadence: Cadence, now: number = Date.now()): number 
 export function catchUpDecision(
     schedule: Schedule,
     now: number = Date.now(),
-): { run: boolean; nextRunAt: number; slotAt?: number } {
+): { run: boolean; nextRunAt: number; slotAt?: number; missed?: boolean } {
     if (schedule.cadence.kind !== "daily") {
         // Intervals never replay a backlog, one-offs are handled by the caller.
         return { run: false, nextRunAt: nextRunFor(schedule, now) };
@@ -302,10 +302,16 @@ export function catchUpDecision(
     // A dormant daily must not be woken by a slot it was never due to serve.
     // Without this, every tick past today's slot would see an unserved slot and
     // fire, which is precisely the daily run the dormancy exists to skip.
-    const run = dormancyAllows(schedule, slot) && missedBy < CATCH_UP_GRACE_MS && !ranSlot(schedule, slot);
+    const owed = dormancyAllows(schedule, slot) && !ranSlot(schedule, slot);
+    const run = owed && missedBy < CATCH_UP_GRACE_MS;
+    // Owed the slot, but too late to be worth serving. That is the case worth
+    // recording: the watcher was due, nothing ran it, and declining to run it
+    // late is correct but must not also be silent. A slot skipped by dormancy
+    // or already served is not missed, it is simply not owed.
+    const missed = owed && !run;
     // Having run (or given up on) today's slot, the next one is tomorrow's —
     // or later still, if the watcher has earned a stretch.
-    return { run, nextRunAt: withDailyDormancy(schedule, slot + DAY_MS), slotAt: slot };
+    return { run, nextRunAt: withDailyDormancy(schedule, slot + DAY_MS), slotAt: slot, missed };
 }
 
 /**
@@ -331,7 +337,12 @@ export function describeSchedule(schedule: Schedule): string {
                 effectiveCadence(schedule),
             )} after ${quiet} quiet runs`;
     const silence = describeSuppression(schedule);
-    return silence ? `${base} (${silence})` : base;
+    const withSilence = silence ? `${base} (${silence})` : base;
+    // Appended rather than folded into the cadence: the cadence is what the
+    // watcher is meant to do, and this is the separate fact that it recently
+    // did not get the chance.
+    const missed = describeMissedSlots(schedule);
+    return missed ? `${withSilence}, ${missed}` : withSilence;
 }
 
 /**
@@ -516,6 +527,52 @@ export function clearBlindRuns(schedule: Schedule): boolean {
     const wasBlind = (schedule.blindRuns ?? 0) > 0;
     schedule.blindRuns = 0;
     return wasBlind;
+}
+
+/**
+ * A daily slot that passed with nothing running to serve it.
+ *
+ * Deliberately *not* a quiet run, for the same reason a blind run is not one.
+ * A quiet run is the watcher reporting that it looked and found nothing, and it
+ * earns a longer leash. A missed slot is the watcher never having looked, and
+ * stretching the cadence because of it would widen the very gap that caused it.
+ *
+ * Returns true when this is the first slot missed in a row, the one worth
+ * saying out loud. A watcher that has been dark for a week has one story, not
+ * seven.
+ */
+export function noteMissedSlot(schedule: Schedule, slotAt: number): boolean {
+    // Same slot twice is the same miss: launch and the first tick after it both
+    // see an unserved slot, and counting both would double every outage.
+    if (schedule.lastMissedSlotAt === slotAt) return false;
+    schedule.missedSlots = (schedule.missedSlots ?? 0) + 1;
+    schedule.lastMissedSlotAt = slotAt;
+    return schedule.missedSlots === 1;
+}
+
+/** A slot that was actually served. Returns true when it ends an outage. */
+export function clearMissedSlots(schedule: Schedule): boolean {
+    const wasMissing = (schedule.missedSlots ?? 0) > 0;
+    schedule.missedSlots = 0;
+    return wasMissing;
+}
+
+/**
+ * What to say about a watcher's missed slots, or nothing if it has none.
+ *
+ * Phrased as slots rather than days because that is what was actually lost: a
+ * watcher easing off to every third day misses one slot in three days, and
+ * calling that "three days missed" would overstate it.
+ */
+export function describeMissedSlots(schedule: Schedule): string | undefined {
+    const missed = schedule.missedSlots ?? 0;
+    if (missed <= 0) return undefined;
+    const when = schedule.lastMissedSlotAt
+        ? `, most recently ${new Date(schedule.lastMissedSlotAt).toLocaleString()}`
+        : "";
+    return missed === 1
+        ? `missed its last slot: nothing was running to serve it${when}`
+        : `missed its last ${missed} slots: nothing was running to serve them${when}`;
 }
 
 /**
