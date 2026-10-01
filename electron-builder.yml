@@ -23,7 +23,7 @@ files:
   # Bundling a second copy would quadruple the download to save nobody a step.
   # See src/main/runtime.ts, which finds the user's own binary instead.
   - "!node_modules/@github/copilot/**"
-  - "!node_modules/@github/copilot-*/**"
+  - "!node_modules/@github/copilot-sdk-*/**"
 
 # The tray marks are read from disk at runtime rather than bundled through the
 # renderer, because the tray lives in the main process.
