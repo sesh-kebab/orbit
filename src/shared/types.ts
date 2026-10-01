@@ -170,6 +170,26 @@ export interface Schedule {
      * repeated. Cleared the moment a run can see again.
      */
     blindRuns?: number;
+    /**
+     * Daily slots that passed unserved because nothing was running to serve
+     * them. Counted consecutively, cleared the moment a run lands.
+     *
+     * This is a third outcome, and it is not a kind of quiet run. A quiet run
+     * means the watcher looked and found nothing, which is reassuring. A missed
+     * slot means the watcher never looked at all, which is the opposite, and
+     * the two were indistinguishable for as long as a missed slot left no trace.
+     *
+     * The concrete casualty: Orbit was not running between 28 and 30 September
+     * 2026, so two days of the 08:00 briefing and the 16:45 check-in came and
+     * went. `catchUpDecision` declined all four correctly, because a briefing
+     * written for 08:00 is noise at 18:15, and then said nothing about having
+     * declined them. The user's evidence that his assistant had been dark for
+     * 44 hours was an absence of messages, which is also what a quiet day looks
+     * like.
+     */
+    missedSlots?: number;
+    /** The most recent daily slot that passed with nothing running to serve it. */
+    lastMissedSlotAt?: number;
     runCount: number;
     /** Agent currently executing this schedule, if any. */
     activeAgentId?: string;
