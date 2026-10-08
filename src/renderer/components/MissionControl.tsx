@@ -16,8 +16,9 @@
  * without you, became one `work` section rather than two rail slots.
  */
 import { useState } from "react";
-import type { HistoryEntry, OrbitState, Schedule } from "../../shared/types.js";
+import type { HistoryEntry, MemoryNote, OrbitState, Schedule } from "../../shared/types.js";
 import { CHAT_FONTS, CHAT_FONT_SIZES } from "../../shared/types.js";
+import { MEMORY_CATEGORIES, endsIncomplete } from "../../shared/memoryText.js";
 import type { DeckSection } from "../../shared/types.js";
 import { elapsedLabel } from "../mood.js";
 import { BoardTab } from "./Board.js";
@@ -304,27 +305,142 @@ function MemoryTab({ state }: { state: OrbitState }): React.JSX.Element {
                     </button>
                 </div>
             ))}
-            {state.memories.length === 0 ? (
+            <MemoryList memories={state.memories} />
+        </div>
+    );
+}
+
+/** "All", or one of the five category tags a memory can carry. */
+type MemoryFilter = "all" | MemoryNote["category"];
+
+/**
+ * The remembered list, filtered.
+ *
+ * It was every record, newest first, grouped by nothing: at sixty-plus items
+ * that is a scroll, not a list, and finding the one memory you want to correct
+ * meant reading past fifty you did not. Three filters, applied together:
+ * category, a substring of the text, and whether the record was cut short
+ * before it was stored.
+ *
+ * The incomplete test is the same one `orbit_list_memories` marks records
+ * with — `endsIncomplete` from `src/shared/memoryText.ts` — rather than a
+ * second opinion written for the panel. Those are the records that need
+ * rewriting from primary evidence, so being able to ask for just them is the
+ * difference between knowing some are broken and being able to fix them.
+ *
+ * Filter state is local and this component unmounts with the section, so
+ * leaving the tab and coming back gives you the whole list again. That is
+ * deliberate: a filter you cannot see is a list that is lying to you, and the
+ * one place it would be invisible is the moment you arrive.
+ */
+function MemoryList({ memories }: { memories: readonly MemoryNote[] }): React.JSX.Element {
+    const [filter, setFilter] = useState<MemoryFilter>("all");
+    const [query, setQuery] = useState("");
+    const [incompleteOnly, setIncompleteOnly] = useState(false);
+
+    if (memories.length === 0) {
+        return (
+            <p className="muted small pad">
+                Nothing remembered yet. Tell Orbit a lasting preference and it will write it down.
+            </p>
+        );
+    }
+
+    const counts = new Map<MemoryNote["category"], number>();
+    for (const memory of memories) counts.set(memory.category, (counts.get(memory.category) ?? 0) + 1);
+    const cut = memories.filter((memory) => endsIncomplete(memory.text)).length;
+
+    const needle = query.trim().toLowerCase();
+    const shown = [...memories]
+        .reverse()
+        .filter((memory) => filter === "all" || memory.category === filter)
+        .filter((memory) => !incompleteOnly || endsIncomplete(memory.text))
+        .filter((memory) => needle === "" || memory.text.toLowerCase().includes(needle));
+
+    const filtering = filter !== "all" || incompleteOnly || needle !== "";
+
+    return (
+        <>
+            <div className="memory-filters">
+                <button
+                    className={filter === "all" ? "memory-chip on" : "memory-chip"}
+                    title="Show every remembered item"
+                    aria-pressed={filter === "all"}
+                    onClick={() => setFilter("all")}
+                >
+                    all <em>{memories.length}</em>
+                </button>
+                {MEMORY_CATEGORIES.filter((category) => counts.has(category)).map((category) => (
+                    <button
+                        key={category}
+                        className={filter === category ? "memory-chip on" : "memory-chip"}
+                        title={`Show only ${category} memories`}
+                        aria-pressed={filter === category}
+                        onClick={() => setFilter((current) => (current === category ? "all" : category))}
+                    >
+                        {category} <em>{counts.get(category)}</em>
+                    </button>
+                ))}
+                {cut > 0 && (
+                    <button
+                        className={incompleteOnly ? "memory-chip warn on" : "memory-chip warn"}
+                        title="Show only memories that were cut short before they were stored"
+                        aria-pressed={incompleteOnly}
+                        onClick={() => setIncompleteOnly((on) => !on)}
+                    >
+                        incomplete only <em>{cut}</em>
+                    </button>
+                )}
+            </div>
+
+            <div className="memory-search">
+                <input
+                    type="search"
+                    value={query}
+                    placeholder="Filter by text"
+                    aria-label="Filter memories by text"
+                    onChange={(event) => setQuery(event.target.value)}
+                />
+            </div>
+
+            {shown.length === 0 ? (
                 <p className="muted small pad">
-                    Nothing remembered yet. Tell Orbit a lasting preference and it will write it down.
+                    No memory matches that.{" "}
+                    <button
+                        className="link"
+                        onClick={() => {
+                            setFilter("all");
+                            setQuery("");
+                            setIncompleteOnly(false);
+                        }}
+                    >
+                        clear filters
+                    </button>
                 </p>
             ) : (
-                [...state.memories].reverse().map((memory) => (
-                    <div key={memory.id} className="memory-row">
-                        <span className="tag">{memory.category}</span>
-                        <span className="memory-text">{memory.text}</span>
-                        <button
-                            className="icon-button"
-                            title="Forget this"
-                            aria-label="Forget this"
-                            onClick={() => void window.orbit.forgetMemory(memory.id)}
-                        >
-                            <Icon name="trash" />
-                        </button>
-                    </div>
-                ))
+                <>
+                    {filtering && (
+                        <p className="muted small pad">
+                            {shown.length} of {memories.length} shown
+                        </p>
+                    )}
+                    {shown.map((memory) => (
+                        <div key={memory.id} className="memory-row">
+                            <span className="tag">{memory.category}</span>
+                            <span className="memory-text">{memory.text}</span>
+                            <button
+                                className="icon-button"
+                                title="Forget this"
+                                aria-label="Forget this"
+                                onClick={() => void window.orbit.forgetMemory(memory.id)}
+                            >
+                                <Icon name="trash" />
+                            </button>
+                        </div>
+                    ))}
+                </>
             )}
-        </div>
+        </>
     );
 }
 

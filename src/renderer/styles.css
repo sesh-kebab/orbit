@@ -1163,6 +1163,85 @@ body,
     flex: 1;
     overflow-wrap: anywhere;
 }
+
+/* The memory filters. Sixty-odd records is a scroll rather than a list, so the
+   panel narrows it: one category at a time, a substring of the text, and the
+   records that were cut short before they were stored. The chips wrap because
+   the panel is 440px wide at its narrowest and six of them do not fit on a
+   line. */
+.memory-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0 2px 2px;
+}
+.memory-chip {
+    all: unset;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    font-size: calc(var(--chat-font-scale) * 10px);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--dim);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid transparent;
+    border-radius: 999px;
+    padding: 3px 8px;
+    cursor: pointer;
+    transition:
+        background 120ms ease,
+        color 120ms ease;
+}
+.memory-chip:hover {
+    background: rgba(255, 255, 255, 0.14);
+    color: var(--ink);
+}
+.memory-chip:focus-visible {
+    border-color: var(--line-bright);
+}
+.memory-chip.on {
+    background: rgba(255, 255, 255, 0.2);
+    color: var(--ink);
+}
+/* The cut-short records. Warned rather than tagged, because they are the ones
+   carrying a claim whose qualifier is missing. */
+.memory-chip.warn {
+    color: rgba(245, 196, 105, 0.75);
+    background: rgba(245, 196, 105, 0.1);
+}
+.memory-chip.warn:hover,
+.memory-chip.warn.on {
+    color: rgba(245, 196, 105, 1);
+    background: rgba(245, 196, 105, 0.22);
+}
+.memory-chip em {
+    font-style: normal;
+    font-weight: 600;
+    opacity: 0.6;
+}
+
+.memory-search input {
+    all: unset;
+    width: 100%;
+    box-sizing: border-box;
+    font-size: calc(var(--chat-font-scale) * 12px);
+    padding: 6px 9px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.28);
+    border: 1px solid var(--line);
+}
+.memory-search input::placeholder {
+    color: var(--dim);
+}
+.memory-search input:focus-visible {
+    border-color: var(--line-bright);
+}
+.memory-search input::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+}
+
 .tag {
     font-size: calc(var(--chat-font-scale) * 9px);
     font-weight: 800;
@@ -1674,6 +1753,16 @@ body,
     background: rgba(0, 0, 0, 0.18);
 }
 
+/* The copy control sits over the block rather than beside it, so a snippet is
+   no narrower for having one. The wrapper is the hover target and the thing
+   the button is positioned against. */
+.md-code-wrap {
+    position: relative;
+    /* The block is a flex item inside `.md`. Without this a long unbroken line
+       widens the bubble instead of scrolling inside it. */
+    min-width: 0;
+}
+
 .md-code {
     margin: 0;
     padding: 8px 10px;
@@ -1690,6 +1779,52 @@ body,
 }
 .bubble-user .md-code {
     background: rgba(0, 0, 0, 0.22);
+}
+
+/* Hidden until the pointer is over the block or the button has keyboard focus.
+   A control on every snippet all the time is furniture; one that appears when
+   you reach for it is a control. It stays out of text selection so dragging
+   across the block does not pick up the word "copy". */
+.md-copy {
+    all: unset;
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: calc(var(--chat-font-scale) * 9.5px);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    background: rgba(20, 20, 28, 0.88);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 2px 6px;
+    cursor: pointer;
+    user-select: none;
+    opacity: 0;
+    pointer-events: none;
+    transition:
+        opacity 120ms ease,
+        color 120ms ease;
+}
+.md-code-wrap:hover .md-copy,
+.md-copy:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+.md-copy:hover {
+    color: var(--ink);
+}
+/* The confirmation stays up on its own for a couple of seconds, including
+   after the pointer has left: a "copied" nobody sees is not a confirmation. */
+.md-copy.copied {
+    opacity: 1;
+    pointer-events: auto;
+    color: rgba(120, 220, 170, 1);
+    border-color: rgba(120, 220, 170, 0.45);
 }
 
 .md-rule {
