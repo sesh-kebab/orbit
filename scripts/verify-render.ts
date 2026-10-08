@@ -21,8 +21,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MissionControl } from "../src/renderer/components/MissionControl.js";
 import { Message } from "../src/renderer/components/Message.js";
 import { NavRail, railState } from "../src/renderer/components/NavRail.js";
-import { DECK_SECTIONS, isDeckSection, type ChatMessage, type DeckSection, type OrbitState } from "../src/shared/types.js";
-import { AGENTS, EPOCH, REQUEST, SCHEDULES, baseState } from "../tools/capture/demo.js";
+import { DECK_SECTIONS, isDeckSection, type ChatMessage, type DeckSection, type MemoryNote, type OrbitState } from "../src/shared/types.js";
+import { MEMORY_CATEGORIES } from "../src/shared/memoryText.js";
+import { AGENTS, EPOCH, MEMORIES, REQUEST, SCHEDULES, baseState } from "../tools/capture/demo.js";
 
 let passed = 0;
 const failures: string[] = [];
@@ -396,6 +397,94 @@ function posed(patch: Partial<OrbitState> = {}, section: DeckSection = "board"):
     // A typed message is untouched.
     const typed = draw(baseState({ messages: [elsewhere] }));
     ok("a typed message carries no header", !typed.includes("reply-quote"));
+}
+
+// MARK: - Filtering the memory list
+//
+// Sixty-odd records is a scroll rather than a list. The panel narrows it three
+// ways at once, and the one that matters most is "incomplete only": those are
+// the records cut short before they were stored, so they are the ones carrying
+// a claim whose qualifier is missing.
+
+{
+    const cut: MemoryNote = {
+        id: "n6",
+        text: "The card balance on account ending 471005 has no c … [truncated]",
+        category: "fact",
+        createdAt: EPOCH - 86_400_000,
+        source: "orbit",
+    };
+    const state = posed({ memories: [...MEMORIES, cut] }, "memory");
+    const markup = render(state);
+
+    ok("the memory tab offers an all chip", /class="memory-chip on"[\s\S]*?all/.test(markup));
+    ok(
+        "every category present gets a chip",
+        ["preference", "project", "routine", "fact"].every((c) => markup.includes(`>${c} <em>`)),
+    );
+    ok("the chips keep the canonical category order", MEMORY_CATEGORIES.indexOf("preference") === 0);
+    ok("a category with two records says two", markup.includes("preference <em>2</em>"));
+    ok("a category with one says one", markup.includes("routine <em>1</em>"));
+    check("a category nobody uses gets no chip", count(markup, ">person <em>"), 0);
+    ok("the all chip counts everything", markup.includes("all <em>6</em>"));
+    ok("the cut records are offered on their own", markup.includes("incomplete only <em>1</em>"));
+    ok("and there is a text filter", markup.includes('aria-label="Filter memories by text"'));
+
+    // Nothing is filtered on arrival, so the count line stays off: "6 of 6" on
+    // a list showing all six is noise.
+    ok("an unfiltered list does not announce a count", !/\d+ of \d+ shown/.test(text(markup)));
+    check("and every record is drawn", count(markup, 'class="memory-row"'), 6);
+
+    // A list with nothing cut short must not offer the filter at all, on the
+    // same argument the prompt copy makes: an always-present control that is
+    // always empty is furniture.
+    const whole = render(posed({ memories: MEMORIES }, "memory"));
+    ok("a list with nothing cut offers no incomplete filter", !whole.includes("incomplete only"));
+
+    // Empty is a state, not a blank pane.
+    const none = render(posed({ memories: [] }, "memory"));
+    ok("an empty store says so", text(none).includes("Nothing remembered yet"));
+    ok("and offers no filters to apply to nothing", !none.includes("memory-chip"));
+}
+
+// MARK: - Copying a code block
+//
+// Code is the one block meant to be taken somewhere else, and the panel is a
+// narrow floating window, so selecting eight lines by hand means dragging
+// through a sideways scroller.
+
+{
+    const snippet = 'curl -s "https://example.invalid/a?b=c" \\\n  -H "MS-CV: abc"';
+    const fenced: ChatMessage = {
+        id: "c1",
+        role: "orbit",
+        text: `Run this:\n\n\`\`\`bash\n${snippet}\n\`\`\`\n`,
+        kind: { type: "text" },
+        at: EPOCH,
+    };
+    const draw = (message: ChatMessage): string => {
+        const state = baseState({ messages: [message] });
+        return renderToStaticMarkup(createElement(Message, { state, message }));
+    };
+
+    const markup = draw(fenced);
+    check("a fenced block gets one copy control", count(markup, 'class="md-copy"'), 1);
+    ok("it is labelled for a screen reader", markup.includes('aria-label="Copy this code"'));
+    ok("the block is wrapped so the control can sit over it", markup.includes('class="md-code-wrap"'));
+    ok("the code itself is still a pre", markup.includes('class="md-code"'));
+
+    // The language tag is not rendered, so it cannot be copied by accident.
+    ok("the fence's language tag is not drawn", !text(markup).includes("bash"));
+
+    // A half-arrived fence is still a code block, so it still gets the control:
+    // the user wants the command as soon as it is readable, not once the turn
+    // has finished.
+    const streaming = draw({ ...fenced, text: "Run this:\n\n```bash\ncurl -s \\", streaming: true });
+    check("a streaming block gets one too", count(streaming, 'class="md-copy"'), 1);
+
+    // Prose must not grow one.
+    const prose = draw({ ...fenced, text: "No code here, just a sentence." });
+    check("prose gets no copy control", count(prose, "md-copy"), 0);
 }
 
 if (failures.length > 0) {

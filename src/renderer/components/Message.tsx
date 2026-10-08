@@ -171,11 +171,7 @@ function BlockNode({ block, known }: { block: Block; known: Map<string, PathInfo
                 </blockquote>
             );
         case "code":
-            return (
-                <pre className="md-code">
-                    <code>{block.text}</code>
-                </pre>
-            );
+            return <CodeBlock text={block.text} />;
         case "rule":
             return <hr className="md-rule" />;
         case "list":
@@ -236,6 +232,74 @@ function BlockNode({ block, known }: { block: Block; known: Map<string, PathInfo
 
 function align(value: Align): string | undefined {
     return value ? `md-${value}` : undefined;
+}
+
+/** How long "Copied" stays up before the button goes back to being a button. */
+const COPIED_FOR_MS = 1800;
+
+/**
+ * A fenced code block, with a copy control.
+ *
+ * Code is the one block that is meant to be taken somewhere else — a curl
+ * command, a URL, a snippet — and the panel is a narrow floating window, so
+ * selecting eight lines by hand means dragging through a sideways scroller.
+ * The button copies `block.text`, which is the fence's contents as parsed:
+ * not the markup around it, and not the language tag, which the panel does not
+ * render anyway.
+ *
+ * It is drawn over the top-right corner and only appears on hover or keyboard
+ * focus, because a control sitting permanently on every snippet is furniture.
+ * `user-select: none` on it keeps it out of a selection that drags across the
+ * block, which is the one way a copy button can make copying worse.
+ *
+ * Nothing here cares whether the message is still streaming. Blocks are
+ * re-parsed from the text on every render and this is keyed by position, so a
+ * half-written fence gets the same control and copies as much as has arrived.
+ */
+function CodeBlock({ text }: { text: string }): React.JSX.Element {
+    const [copied, setCopied] = useState(false);
+    const timer = useRef<number | undefined>(undefined);
+
+    useEffect(() => () => window.clearTimeout(timer.current), []);
+
+    async function copy(): Promise<void> {
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch {
+            // A clipboard that refuses is not worth an error card over a
+            // snippet the user can still select by hand. Say nothing and
+            // leave the button alone, so it does not claim a copy that
+            // did not happen.
+            return;
+        }
+        setCopied(true);
+        window.clearTimeout(timer.current);
+        timer.current = window.setTimeout(() => setCopied(false), COPIED_FOR_MS);
+    }
+
+    return (
+        <div className="md-code-wrap">
+            <pre className="md-code">
+                <code>{text}</code>
+            </pre>
+            <button
+                className={copied ? "md-copy copied" : "md-copy"}
+                title={copied ? "Copied" : "Copy this code"}
+                aria-label={copied ? "Copied" : "Copy this code"}
+                onClick={() => void copy()}
+            >
+                {copied ? (
+                    <>
+                        <Icon name="check" /> copied
+                    </>
+                ) : (
+                    <>
+                        <Icon name="copy" /> copy
+                    </>
+                )}
+            </button>
+        </div>
+    );
 }
 
 /**

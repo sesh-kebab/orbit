@@ -36,6 +36,7 @@ export type IconName =
     | "trash"
     | "run"
     | "book"
+    | "copy"
     | "sliders";
 
 /**
@@ -144,6 +145,16 @@ const PATHS: Record<IconName, React.ReactNode> = {
             <path d="M3 5h4.2M9.8 5H13M3 11h1.6M7.2 11H13" />
             <circle cx="8.5" cy="5" r="1.6" />
             <circle cx="5.9" cy="11" r="1.6" />
+        </>
+    ),
+    /*
+     * Copy. Two offset sheets, the usual glyph for it, so the control on a
+     * code block needs no label to be read.
+     */
+    copy: (
+        <>
+            <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+            <path d="M10.5 5.5V4a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5" />
         </>
     ),
     run: (

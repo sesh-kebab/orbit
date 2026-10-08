@@ -22,13 +22,20 @@
  * for one.
  */
 import type { MemoryNote } from "../../shared/types.js";
+import { MEMORY_CATEGORIES, TRUNCATION_MARKER, endsIncomplete } from "../../shared/memoryText.js";
 import { describeMiss, findById, findIndexById } from "./ids.js";
+
+/*
+ * All three now live in `src/shared/memoryText.ts` so the memory panel can
+ * offer the same categories and apply the same cut-short test: the renderer
+ * cannot import anything under `src/main`. They are re-exported here because
+ * every caller and the memory suite already import them from this module, and
+ * moving a definition is not a reason to move everybody's import.
+ */
+export { MEMORY_CATEGORIES, TRUNCATION_MARKER, endsIncomplete };
 
 /** How many superseded wordings to keep before dropping the oldest. */
 export const PRIOR_TEXT_CAP = 5;
-
-/** The categories a memory may carry. */
-export const MEMORY_CATEGORIES = ["preference", "fact", "routine", "person", "project"] as const;
 
 /** What a memory falls back to. The least specific claim about what it is. */
 export const DEFAULT_MEMORY_CATEGORY: MemoryNote["category"] = "fact";
@@ -208,8 +215,10 @@ export interface ClippedMemory {
  * holds the sentence whole and this shortens the copy going into the prompt.
  * The difference between the two versions of this fix is the difference between
  * "you cannot trust the end of this line" and "here is how to go and read it".
+ *
+ * The marker itself is defined in `src/shared/memoryText.ts` and re-exported
+ * at the top of this file.
  */
-export const TRUNCATION_MARKER = " … [truncated]";
 
 export function clipMemory(text: string, cap = MEMORY_RENDER_CAP): ClippedMemory {
     const clean = text.replace(/\s+/g, " ").trim();
@@ -333,14 +342,10 @@ export function findMemoryOverlap(text: string, memories: MemoryNote[]): Overlap
 }
 
 /**
- * Does this text stop mid-thought with no way back? True for anything written
- * under the old write-time clip, which left either the marker or a bare
- * ellipsis at the end and kept nothing else.
+ * Does this text stop mid-thought with no way back? Defined in
+ * `src/shared/memoryText.ts` so the memory panel can ask the same question,
+ * and re-exported at the top of this file.
  */
-export function endsIncomplete(text: string): boolean {
-    const clean = text.trimEnd();
-    return clean.endsWith(TRUNCATION_MARKER.trim()) || clean.endsWith("\u2026");
-}
 
 /**
  * Normalise a memory for storage. Whitespace is collapsed because a memory is
