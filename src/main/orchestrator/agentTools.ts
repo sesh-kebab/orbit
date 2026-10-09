@@ -83,6 +83,24 @@ export const AGENT_TOOL_NAMES: readonly string[] = [
     // The safety is `retirementCase`, not the allowlist: a watcher that is still
     // finding things is refused however it is asked. See `schedules.ts`.
     "orbit_archive_schedule",
+    // Narrowing a watcher's silence rules, and only narrowing them.
+    //
+    // Same argument as archiving, one step weaker. `orbit_quieten_schedule`
+    // cannot widen the days a watcher runs, cannot switch leave-respect back
+    // off, and cannot reach the brief, the cadence or the title. Every edit it
+    // can make results in Orbit saying strictly less, which is the property
+    // that makes it safe to hand to a background job.
+    //
+    // It is here because of the night of 8 Oct 2026. The user had recorded
+    // leave for 9-11 Oct and left for an office move. "Daily briefing" was the
+    // one watcher never given silence rules when they were introduced: no
+    // weekday rule, no leave rule, 08:00 every day, and it spawns sub-agents.
+    // The nightly reflection could see all of that and could do precisely
+    // nothing about it, because the only tool that sets those properties is
+    // `orbit_update_schedule` and that is forbidden here for good reasons. The
+    // choice was a tool this narrow or three briefings delivered to an empty
+    // flat, and a file asking him to fix it himself when he got back.
+    "orbit_quieten_schedule",
     // Orbit's own operating notes. An agent may read them and read their
     // history, which is how the nightly reflection can tell whether a
     // correction it is about to write down is already written down. Revising

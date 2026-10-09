@@ -29,6 +29,7 @@ import {
     makeSchedule,
     noteMissedSlot,
 } from "../src/main/orchestrator/schedules.js";
+import { makeLeavePeriod } from "../src/main/orchestrator/suppression.js";
 import type { Schedule } from "../src/shared/types.js";
 
 let failures = 0;
@@ -157,6 +158,58 @@ console.log("missed slots");
 {
     const schedule = daily("08:00");
     check("a healthy cadence is unchanged", describeSchedule(schedule) === "daily at 08:00");
+}
+
+// MARK: - The next run it advertises
+
+// `nextRunAt` is read in two registers. The clock treats it as "wake and look",
+// and a suppressed watcher waking to be turned away is harmless. Every reading
+// surface treats it as a statement of fact, and that statement used to be
+// wrong: catch-up rolled the field forward by a day without consulting the
+// silence rules. On 8 Oct 2026 a Thursday-only watcher sat with a Friday
+// nextRunAt, so orbit_list_schedules reported it as running tomorrow and the
+// board offered the user a card promising the same. Neither could happen.
+{
+    // Thursday-only. 30 Sep 2026 is a Wednesday, so "tomorrow" is its day and
+    // the naive roll-forward is accidentally right: start from its own day.
+    const schedule = daily("08:00");
+    schedule.runDays = [4];
+    const thursday = new Date(2026, 9, 1, 18, 15, 0, 0).getTime();
+    const decision = catchUpDecision(schedule, thursday);
+    const next = new Date(decision.nextRunAt);
+    check("a Thursday-only watcher does not advertise Friday", next.getDay() === 4);
+    check("it advertises the Thursday a week on", next.getDate() === 8);
+    check("at its own slot, not midnight", next.getHours() === 8 && next.getMinutes() === 0);
+}
+
+// The same field, read before the slot rather than after it.
+{
+    const schedule = daily("08:00");
+    schedule.runDays = [4];
+    const friday = new Date(2026, 9, 2, 6, 0, 0, 0).getTime();
+    const decision = catchUpDecision(schedule, friday);
+    check("a slot ahead today on a barred day is pushed on", new Date(decision.nextRunAt).getDay() === 4);
+}
+
+// Leave is the other half of the same rule, and the case that mattered on the
+// night: the user away 9-11 Oct with a watcher due at 08:00 each morning.
+{
+    const schedule = daily("08:00");
+    schedule.skipOnLeave = true;
+    const leave = [makeLeavePeriod("2026-10-09", "2026-10-11", "Office move")];
+    const thursdayEvening = new Date(2026, 9, 8, 21, 30, 0, 0).getTime();
+    const decision = catchUpDecision(schedule, thursdayEvening, leave);
+    const next = new Date(decision.nextRunAt);
+    check("a leave-respecting watcher does not advertise a leave day", next.getDate() === 12);
+    check("it waits for the first working morning back", next.getHours() === 8);
+}
+
+// Suppression must not be charged to watchers that have none.
+{
+    const schedule = daily("08:00");
+    const decision = catchUpDecision(schedule, at(18, 15));
+    const next = new Date(decision.nextRunAt);
+    check("a watcher with no silence rules still runs tomorrow", next.getDate() === 1);
 }
 
 if (failures > 0) {

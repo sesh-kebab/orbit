@@ -114,7 +114,7 @@ ok(
 );
 
 const archiveStart = orchestrator.indexOf('defineTool("orbit_archive_schedule"');
-const archiveEnd = orchestrator.indexOf('defineTool("orbit_update_schedule"', archiveStart);
+const archiveEnd = orchestrator.indexOf('defineTool("orbit_quieten_schedule"', archiveStart);
 ok("the retire tool exists in the orchestrator", archiveStart > 0 && archiveEnd > archiveStart);
 const archiveBody = orchestrator.slice(archiveStart, archiveEnd);
 
@@ -130,6 +130,38 @@ ok("retiring only ever archives", !/archived\s*=\s*false/.test(archiveBody));
 // Nor a way to smuggle in the edits `orbit_update_schedule` is withheld for.
 for (const field of ["task", "title", "cadence", "enabled", "runDays"]) {
     ok(`retiring cannot change ${field}`, !new RegExp(`schedule\\.${field}\\s*=[^=]`).test(archiveBody));
+}
+
+// MARK: - Quietening a watcher
+
+// The second tool that changes what Orbit runs, allowed on the same argument
+// as archiving: every edit it can make results in Orbit saying less. These
+// checks are the argument, so they are about direction, not presence.
+ok("an agent can quieten a watcher", allowed.has("orbit_quieten_schedule"));
+ok(
+    "quietening is a separate tool from amending, so the narrow one can be granted alone",
+    allowed.has("orbit_quieten_schedule") && !allowed.has("orbit_update_schedule"),
+);
+
+const quietStart = orchestrator.indexOf('defineTool("orbit_quieten_schedule"');
+const quietEnd = orchestrator.indexOf('defineTool("orbit_update_schedule"', quietStart);
+ok("the quieten tool exists in the orchestrator", quietStart > 0 && quietEnd > quietStart);
+const quietBody = orchestrator.slice(quietStart, quietEnd);
+
+ok("quietening demands a reason for the record", /reason:\s*z[\s\S]{0,40}\.string\(\)/.test(quietBody));
+ok("leave-respect cannot be switched off", /skipOnLeave === false/.test(quietBody));
+ok("it is only ever turned on", /skipOnLeave === true/.test(quietBody) && !/skipOnLeave\s*=\s*false/.test(quietBody));
+ok("day names are validated rather than trusted", /parseRunDays\(runDays\)/.test(quietBody));
+ok("a typo is refused rather than silently widening", /parsed instanceof Error/.test(quietBody));
+ok("an empty day list is refused", /parsed\.length === 0/.test(quietBody));
+ok("widening the days is refused", /widened\.length > 0/.test(quietBody));
+ok("the refusal explains which days it would have added", /describeDays\(widened\)/.test(quietBody));
+ok("the stated next run is recomputed under the new rule", /nextAllowedRunFor\(schedule, state\.leave\)/.test(quietBody));
+
+// The edits it must never reach: the ones orbit_update_schedule is withheld
+// for. runDays and skipOnLeave are its whole job and are checked above.
+for (const field of ["task", "title", "cadence", "enabled", "archived"]) {
+    ok(`quietening cannot change ${field}`, !new RegExp(`schedule\\.${field}\\s*=[^=]`).test(quietBody));
 }
 
 // The four tools the nightly reflection cannot do its job without. These are

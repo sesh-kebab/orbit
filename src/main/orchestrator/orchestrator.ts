@@ -139,6 +139,7 @@ import {
 import { describeSync, shouldAutoSync, syncWorkspace, workspaceRepoPath } from "../workspace.js";
 import {
     deriveSuppression,
+    describeDays,
     describeSuppression,
     isDayKey,
     makeLeavePeriod,
@@ -930,6 +931,96 @@ export class Orchestrator {
                         runCount: updated.runCount,
                         quietRuns: updated.quietRuns ?? 0,
                         lastResult: updated.lastResult ? clip(updated.lastResult, 200) : undefined,
+                    };
+                },
+            }),
+
+            defineTool("orbit_quieten_schedule", {
+                description:
+                    "Narrow the days a watcher is allowed to speak on, or make it respect recorded leave. Use it when you can see a watcher is set to interrupt the user on days he will not be there: a weekday work routine with no weekend rule, or any watcher with no leave rule at all. It can only ever make a watcher quieter. It cannot widen the days, cannot switch leave-respect back off, and cannot touch the brief, cadence or title, so there is no way to use it to stop a watcher that is doing its job: archive that one instead, or raise it with the user.",
+                skipPermission: true,
+                parameters: z.object({
+                    scheduleId: z.string().describe("From orbit_list_schedules."),
+                    runDays: z
+                        .array(z.string())
+                        .optional()
+                        .describe(
+                            "The only days it may run, e.g. ['mon','tue','wed','thu','fri']. Must be a subset of the days it already runs: this narrows, it does not widen.",
+                        ),
+                    skipOnLeave: z
+                        .boolean()
+                        .optional()
+                        .describe("True to stay silent while the user is on recorded leave. False is refused."),
+                    reason: z
+                        .string()
+                        .describe(
+                            "Why it is being quietened, in one sentence, for the record. Say what evidence made the current rule wrong.",
+                        ),
+                }),
+                handler: async ({ scheduleId, runDays, skipOnLeave, reason }) => {
+                    const target = this.store.get().schedules.find((s) => s.id === scheduleId);
+                    if (!target) return { error: "No watcher with that id." };
+                    if (runDays === undefined && skipOnLeave === undefined) {
+                        return { error: "Nothing to narrow: pass runDays, skipOnLeave, or both." };
+                    }
+                    // One direction only. This is the whole safety argument for
+                    // letting an agent near a schedule at all, so it is checked
+                    // here rather than trusted to the caller's good intentions.
+                    if (skipOnLeave === false) {
+                        return {
+                            error: "skipOnLeave can only be turned on by this tool.",
+                            hint: "Turning it off makes a watcher louder, which is the user's call.",
+                        };
+                    }
+
+                    let days: number[] | undefined;
+                    if (runDays !== undefined) {
+                        const parsed = parseRunDays(runDays);
+                        if (parsed instanceof Error) return { error: parsed.message };
+                        if (!parsed || parsed.length === 0) {
+                            return { error: "runDays must name at least one day." };
+                        }
+                        const current = target.runDays;
+                        if (current && current.length > 0) {
+                            const allowed = new Set(current);
+                            const widened = parsed.filter((day) => !allowed.has(day));
+                            if (widened.length > 0) {
+                                return {
+                                    error: `"${target.title}" already runs only ${describeDays(current)}; this would add ${describeDays(widened)}.`,
+                                    hint: "This tool narrows. Widening a watcher's days is the user's call.",
+                                };
+                            }
+                        }
+                        days = parsed;
+                    }
+
+                    this.store.update((state) => {
+                        const schedule = state.schedules.find((s) => s.id === scheduleId);
+                        if (!schedule) return;
+                        if (days !== undefined) schedule.runDays = days;
+                        if (skipOnLeave === true) schedule.skipOnLeave = true;
+                        schedule.nextRunAt = nextAllowedRunFor(schedule, state.leave);
+                    });
+                    this.persistSchedules();
+
+                    const updated = this.store.get().schedules.find((s) => s.id === scheduleId);
+                    if (!updated) return { error: "No watcher with that id." };
+                    this.log({
+                        kind: "schedule.updated",
+                        title: updated.title,
+                        detail: `quietened to ${describeSuppression(updated)}: ${reason}`,
+                        scheduleId: updated.id,
+                    });
+                    this.store.flush();
+
+                    return {
+                        scheduleId: updated.id,
+                        title: updated.title,
+                        silence: describeSuppression(updated) || undefined,
+                        nextRun: isRunnable(updated)
+                            ? new Date(updated.nextRunAt).toLocaleString()
+                            : undefined,
+                        reason,
                     };
                 },
             }),
@@ -2713,7 +2804,7 @@ export class Orchestrator {
                 continue;
             }
 
-            const decision = catchUpDecision(schedule, now);
+            const decision = catchUpDecision(schedule, now, this.leave);
             this.store.update((state) => {
                 const target = state.schedules.find((s) => s.id === schedule.id);
                 if (!target) return;
@@ -2758,7 +2849,7 @@ export class Orchestrator {
             if (!isRunnable(schedule) || schedule.nextRunAt > now) continue;
             if (this.skipSuppressed(schedule, now)) continue;
             if (schedule.cadence.kind === "daily") {
-                const decision = catchUpDecision(schedule, now);
+                const decision = catchUpDecision(schedule, now, this.leave);
                 const slot = decision.slotAt;
                 // The slot this tick is standing in for has already been served
                 // — a stale `nextRunAt`, or a run that got there first. Roll on
