@@ -8,6 +8,7 @@ import {
     outboundDetail,
     outboundSubject,
     outboundTitle,
+    type OutboundSend,
 } from "./outbound.js";
 
 export interface PermissionDescription {
@@ -17,6 +18,8 @@ export interface PermissionDescription {
     canOfferSessionApproval: boolean;
     /** Set when this puts words in front of someone who is not Seshi. */
     outbound?: boolean;
+    /** The audience, unflattened, for the card to draw one name per line. */
+    send?: OutboundSend;
 }
 
 /** Turn a raw SDK permission request into something a human can judge at a glance. */
@@ -34,6 +37,7 @@ export function describePermission(request: PermissionRequest): PermissionDescri
             // silently approve the next one.
             canOfferSessionApproval: false,
             outbound: true,
+            send,
         };
     }
 
@@ -147,7 +151,16 @@ export function permissionOptions(
 ): PendingRequest["options"] {
     // "Allow once" is the right words for a shell command and the wrong words
     // for a message: the button should say what it does to other people.
-    const allowLabel = description.outbound ? "Send it" : "Allow once";
+    //
+    // When the audience is known the chip carries its size, so the number of
+    // people being mailed is on the control that mails them rather than only in
+    // the headline above a list the eye has already skipped.
+    const count = description.send?.recipients.length ?? 0;
+    const allowLabel = description.outbound
+        ? description.send?.audienceKnown && count > 0
+            ? `Send to ${count}`
+            : "Send it"
+        : "Allow once";
     const denyLabel = description.outbound ? "Don't send" : "Nope";
     const options: PendingRequest["options"] = [{ id: "once", label: allowLabel, tone: "primary" }];
     if (description.canOfferSessionApproval) {

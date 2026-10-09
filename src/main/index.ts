@@ -292,6 +292,11 @@ function registerIpc(): void {
     ipcMain.handle("orbit:resolveOpenItem", (_event, id: string) => {
         orchestrator.resolveOpenItem(id, "dismissed from Mission Control");
     });
+    ipcMain.handle("orbit:answerProposal", (_event, id: unknown, status: unknown) => {
+        if (typeof id !== "string") return;
+        if (status !== "approved" && status !== "declined") return;
+        orchestrator.updateProposal(id, status, { note: "answered from Mission Control" });
+    });
     ipcMain.handle("orbit:markArtifactOpened", (_event, activityId: unknown) => {
         if (typeof activityId === "string") orchestrator.markArtifactOpened(activityId);
     });

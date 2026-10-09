@@ -294,6 +294,7 @@ export class AgentRunner {
             detail: description.detail,
             options: permissionOptions(description),
             allowFreeform: false,
+            outbound: description.send,
         });
 
         this.hooks.patch(this.agent.id, (a) => {

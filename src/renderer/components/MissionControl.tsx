@@ -15,8 +15,8 @@
  * `agents` and `watchers`, two lists of the same thing, work Orbit is doing
  * without you, became one `work` section rather than two rail slots.
  */
-import { useState } from "react";
-import type { HistoryEntry, MemoryNote, OrbitState, Schedule } from "../../shared/types.js";
+import { useEffect, useState } from "react";
+import type { HistoryEntry, MemoryNote, OrbitState, Proposal, Schedule, Settings } from "../../shared/types.js";
 import { CHAT_FONTS, CHAT_FONT_SIZES } from "../../shared/types.js";
 import { MEMORY_CATEGORIES, endsIncomplete } from "../../shared/memoryText.js";
 import type { DeckSection } from "../../shared/types.js";
@@ -37,7 +37,7 @@ export function MissionControl({
     reading?: string;
 }): React.JSX.Element {
     return (
-        <div className="deck">
+        <div className="deck" data-section={section}>
             <div className="deck-body">
                 {section === "board" && <BoardTab state={state} />}
                 {section === "work" && <WorkSection state={state} />}
@@ -306,6 +306,68 @@ function MemoryTab({ state }: { state: OrbitState }): React.JSX.Element {
                 </div>
             ))}
             <MemoryList memories={state.memories} />
+            <ProposalList proposals={state.proposals} />
+        </div>
+    );
+}
+
+/**
+ * What Orbit is proposing about itself.
+ *
+ * A second group inside memory rather than a sixth rail section, and that is a
+ * compromise rather than a discovery. A rail section is a promise that
+ * something is worth opening daily; proposals are worth opening about once a
+ * fortnight, and a section that is empty forty nights out of forty-two trains
+ * the eye to skip that part of the rail. Memory is already the place for "what
+ * Orbit knows and thinks", so this is the nearest honest home.
+ *
+ * The group is titled for what it holds rather than for the section it sits in.
+ * "about me" was the first title and it was wrong in the one way that matters:
+ * directly above it is a list of things Orbit remembers about the user, so a
+ * heading saying "about me" reads as a label for that list, and the proposals
+ * underneath look like more of the same.
+ *
+ * Only `proposed` is listed, and only approve or decline are offered. Shipping
+ * is a claim about code that landed and belongs to whatever can name the branch
+ * and the commit, which a button cannot.
+ */
+function ProposalList({ proposals }: { proposals: readonly Proposal[] }): React.JSX.Element | null {
+    const open = proposals.filter((proposal) => proposal.status === "proposed");
+    const shipped = proposals.filter((proposal) => proposal.status === "shipped").length;
+    if (open.length === 0 && shipped === 0) return null;
+
+    return (
+        <div className="memory-group">
+            <div className="group-head">
+                <span className="group-title">changes Orbit is proposing</span>
+                <span className="muted small">
+                    {open.length > 0
+                        ? `${open.length} waiting on an answer`
+                        : `${shipped} shipped, nothing waiting`}
+                </span>
+            </div>
+            {open.map((proposal) => (
+                <div key={proposal.id} className="memory-row proposal-row">
+                    <span className="tag quiet">proposing</span>
+                    <span className="memory-text">{proposal.text}</span>
+                    <button
+                        className="icon-button"
+                        title="Worth doing. Orbit will pick it up next time it works on itself."
+                        aria-label="Approve this proposal"
+                        onClick={() => void window.orbit.answerProposal(proposal.id, "approved")}
+                    >
+                        <Icon name="check" />
+                    </button>
+                    <button
+                        className="icon-button"
+                        title="Not worth doing. Orbit will stop raising it."
+                        aria-label="Decline this proposal"
+                        onClick={() => void window.orbit.answerProposal(proposal.id, "declined")}
+                    >
+                        <Icon name="close" />
+                    </button>
+                </div>
+            ))}
         </div>
     );
 }
@@ -460,60 +522,270 @@ function HistoryTab({ state }: { state: OrbitState }): React.JSX.Element {
     );
 }
 
-/** The one place the panel's own appearance can be changed without the tray. */
+/**
+ * Everything Orbit lets you set, in one pane.
+ *
+ * It used to be three appearance controls, and the other ten settings existed
+ * only in settings.json. That is a defensible choice for a tool whose user
+ * wrote it, and a bad one for a panel that already has a rail section called
+ * "look": a section that shows three of thirteen settings is not a smaller
+ * settings pane, it is a settings pane that lies about what Orbit can do.
+ *
+ * Grouped by what the setting is about rather than by control type, in the
+ * order they are likely to be wanted: how it looks, what it is allowed to do,
+ * where it works, and how long it waits. Everything applies immediately and is
+ * written to settings.json, so there is no save button to forget.
+ */
 function LookTab({ state }: { state: OrbitState }): React.JSX.Element {
-    const { chatFontFamily, chatFontSize, panelOpacity } = state.settings;
+    const s = state.settings;
+    const set = (patch: Partial<Settings>): void => void window.orbit.setSettings(patch);
+
     return (
-        <div className="deck-list">
-            <div className="setting">
-                <span className="setting-label">font</span>
-                <div className="setting-options">
+        <div className="deck-list settings">
+            <Group title="appearance">
+                <Choice label="font">
                     {CHAT_FONTS.map((font) => (
                         <button
                             key={font.id}
-                            className={`chip ${chatFontFamily === font.id ? "chip-primary" : "chip-neutral"}`}
+                            className={`chip ${s.chatFontFamily === font.id ? "chip-primary" : "chip-neutral"}`}
                             style={{ fontFamily: font.stack }}
                             title={`Set the chat font to ${font.label}`}
-                            onClick={() => void window.orbit.setSettings({ chatFontFamily: font.id })}
+                            onClick={() => set({ chatFontFamily: font.id })}
                         >
                             {font.label}
                         </button>
                     ))}
-                </div>
-            </div>
-            <div className="setting">
-                <span className="setting-label">size</span>
-                <div className="setting-options">
+                </Choice>
+                <Choice label="size" hint="scales the whole panel, not just the chat">
                     {CHAT_FONT_SIZES.map((size) => (
                         <button
                             key={size}
-                            className={`chip ${chatFontSize === size ? "chip-primary" : "chip-neutral"}`}
+                            className={`chip ${s.chatFontSize === size ? "chip-primary" : "chip-neutral"}`}
                             title={`Set the chat text size to ${size}`}
-                            onClick={() => void window.orbit.setSettings({ chatFontSize: size })}
+                            onClick={() => set({ chatFontSize: size })}
                         >
                             {size}
                         </button>
                     ))}
-                </div>
-            </div>
-            <div className="setting">
-                <span className="setting-label">opacity</span>
-                <div className="setting-options">
+                </Choice>
+                <Choice label="opacity">
                     {[0.6, 0.75, 0.88, 1].map((value) => (
                         <button
                             key={value}
-                            className={`chip ${Math.abs(panelOpacity - value) < 0.01 ? "chip-primary" : "chip-neutral"}`}
+                            className={`chip ${Math.abs(s.panelOpacity - value) < 0.01 ? "chip-primary" : "chip-neutral"}`}
                             title={`Make the panels ${Math.round(value * 100)}% solid`}
-                            onClick={() => void window.orbit.setSettings({ panelOpacity: value })}
+                            onClick={() => set({ panelOpacity: value })}
                         >
                             {Math.round(value * 100)}%
                         </button>
                     ))}
-                </div>
-            </div>
+                </Choice>
+            </Group>
+
+            <Group title="what Orbit may do on its own">
+                <Toggle
+                    label="approve everything"
+                    hint="Runs commands and edits files without asking. The one setting here that can cost you something."
+                    on={s.yolo}
+                    danger
+                    onChange={(yolo) => set({ yolo })}
+                />
+                <Toggle
+                    label="approve reading"
+                    hint="Looking at a file changes nothing, so asking about it is mostly noise."
+                    on={s.autoApproveReads}
+                    onChange={(autoApproveReads) => set({ autoApproveReads })}
+                />
+                <Toggle
+                    label="meeting heads-up"
+                    hint="A nudge about five minutes before each calendar meeting. Quiet if no calendar is reachable."
+                    on={s.meetingHeadsUp}
+                    onChange={(meetingHeadsUp) => set({ meetingHeadsUp })}
+                />
+            </Group>
+
+            <Group title="where it works">
+                <Choice label="model" hint={state.models.length === 0 ? "asking Copilot what it has" : undefined}>
+                    {state.models.map((model) => (
+                        <button
+                            key={model.id}
+                            className={`chip ${s.model === model.id ? "chip-primary" : "chip-neutral"}`}
+                            title={`Use ${model.name} for Orbit and the agents it starts`}
+                            onClick={() => set({ model: model.id })}
+                        >
+                            {model.name}
+                        </button>
+                    ))}
+                </Choice>
+                <TextSetting
+                    label="workspace"
+                    hint="Where agents are allowed to work unless told otherwise."
+                    value={s.workspace}
+                    placeholder="~/orbit-workspace"
+                    onCommit={(workspace) => set({ workspace })}
+                />
+                <TextSetting
+                    label="workspace repo"
+                    hint="Git repository the workspace sync copies output into. Empty uses ~/git/workspace. Sync is skipped if there is no repository there."
+                    value={s.workspaceRepo}
+                    placeholder="~/git/workspace"
+                    onCommit={(workspaceRepo) => set({ workspaceRepo })}
+                />
+                <TextSetting
+                    label="copilot path"
+                    hint="Empty means find it automatically. Set it when the CLI lives somewhere Orbit does not think to look."
+                    value={s.copilotPath}
+                    placeholder="found automatically"
+                    onCommit={(copilotPath) => set({ copilotPath })}
+                />
+            </Group>
+
+            <Group title="how long it waits">
+                <Choice
+                    label="waiting for you"
+                    hint="How long a permission request stands before the agent is told nobody answered."
+                >
+                    {[0, 5, 15, 30, 60].map((value) => (
+                        <button
+                            key={value}
+                            className={`chip ${s.requestTimeoutMinutes === value ? "chip-primary" : "chip-neutral"}`}
+                            title={value === 0 ? "Wait forever" : `Give up after ${value} minutes`}
+                            onClick={() => set({ requestTimeoutMinutes: value })}
+                        >
+                            {value === 0 ? "forever" : `${value}m`}
+                        </button>
+                    ))}
+                </Choice>
+                <Choice label="one agent run" hint="A hard cap, so a stuck agent cannot run all night.">
+                    {[0, 10, 30, 60, 120].map((value) => (
+                        <button
+                            key={value}
+                            className={`chip ${s.agentTimeoutMinutes === value ? "chip-primary" : "chip-neutral"}`}
+                            title={value === 0 ? "No cap" : `Stop an agent after ${value} minutes`}
+                            onClick={() => set({ agentTimeoutMinutes: value })}
+                        >
+                            {value === 0 ? "no cap" : `${value}m`}
+                        </button>
+                    ))}
+                </Choice>
+            </Group>
+
+            {/*
+             * The thirteenth. It is a remembered position rather than a
+             * preference, and there is no control for it because the control is
+             * the rail. Named anyway: a settings pane that silently omits one of
+             * the things in settings.json is the problem this pane was fixing.
+             */}
             <p className="muted small pad">
-                Changes apply straight away and are saved to settings.json.
+                Changes apply straight away and are saved to settings.json. The section you were
+                last looking at is remembered there too, currently <strong>{s.deckSection}</strong>.
             </p>
+        </div>
+    );
+}
+
+function Group({ title, children }: { title: string; children: React.ReactNode }): React.JSX.Element {
+    return (
+        <section className="setting-group">
+            <h4 className="group-title">{title}</h4>
+            {children}
+        </section>
+    );
+}
+
+function Choice({
+    label,
+    hint,
+    children,
+}: {
+    label: string;
+    hint?: string;
+    children: React.ReactNode;
+}): React.JSX.Element {
+    return (
+        <div className="setting">
+            <span className="setting-label">{label}</span>
+            <div className="setting-options">{children}</div>
+            {hint && <span className="setting-hint">{hint}</span>}
+        </div>
+    );
+}
+
+function Toggle({
+    label,
+    hint,
+    on,
+    danger,
+    onChange,
+}: {
+    label: string;
+    hint: string;
+    on: boolean;
+    danger?: boolean;
+    onChange(next: boolean): void;
+}): React.JSX.Element {
+    return (
+        <div className="setting setting-toggle">
+            <button
+                className={`switch ${on ? "on" : ""} ${danger && on ? "danger" : ""}`}
+                role="switch"
+                aria-checked={on}
+                aria-label={label}
+                title={hint}
+                onClick={() => onChange(!on)}
+            >
+                <span className="switch-knob" />
+            </button>
+            <div className="setting-body">
+                <span className="setting-label">{label}</span>
+                <span className="setting-hint">{hint}</span>
+            </div>
+        </div>
+    );
+}
+
+/**
+ * A path or a name. Committed on blur and on Enter rather than on every
+ * keystroke: these are written straight to settings.json, and a half-typed path
+ * saved thirty times is thirty chances to point the workspace somewhere real
+ * and wrong.
+ */
+function TextSetting({
+    label,
+    hint,
+    value,
+    placeholder,
+    onCommit,
+}: {
+    label: string;
+    hint: string;
+    value: string;
+    placeholder: string;
+    onCommit(next: string): void;
+}): React.JSX.Element {
+    const [draft, setDraft] = useState(value);
+    useEffect(() => setDraft(value), [value]);
+    const commit = (): void => {
+        const trimmed = draft.trim();
+        if (trimmed !== value) onCommit(trimmed);
+    };
+    return (
+        <div className="setting">
+            <span className="setting-label">{label}</span>
+            <input
+                className="setting-input"
+                value={draft}
+                placeholder={placeholder}
+                spellCheck={false}
+                title={hint}
+                onChange={(event) => setDraft(event.target.value)}
+                onBlur={commit}
+                onKeyDown={(event) => {
+                    if (event.key === "Enter") event.currentTarget.blur();
+                    if (event.key === "Escape") setDraft(value);
+                }}
+            />
+            <span className="setting-hint">{hint}</span>
         </div>
     );
 }

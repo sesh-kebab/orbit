@@ -296,6 +296,7 @@ export class Orchestrator {
         this.designRevisions = this.disk.loadDesignRevisions();
         this.proposals = this.disk.loadProposals();
         this.activity = this.disk.loadActivity();
+        this.publishProposals();
         this.store.update((state) => {
             state.schedules = this.disk.loadSchedules();
             state.leave = this.disk.loadLeave();
@@ -557,14 +558,14 @@ export class Orchestrator {
      */
     snapshotSession(): void {
         const state = this.store.get();
+        const live = state.agents.filter(isLive);
         this.disk.saveSessionSnapshot({
             at: Date.now(),
             messages: state.messages.filter((message) => !message.streaming),
             usage: state.usage,
             lastInteractionAt: state.lastInteractionAt,
-            interrupted: state.agents
-                .filter(isLive)
-                .map((agent) => ({ title: agent.title, task: agent.task, cwd: agent.cwd })),
+            interrupted: live.map((agent) => ({ title: agent.title, task: agent.task, cwd: agent.cwd })),
+            interruptedAgents: live,
         });
     }
 
@@ -577,6 +578,21 @@ export class Orchestrator {
             state.messages = snapshot.messages;
             state.usage = snapshot.usage ?? state.usage;
             state.lastInteractionAt = snapshot.lastInteractionAt ?? Date.now();
+            // Agents that were mid-flight come back visible but severed. The
+            // alternative is that four running threads disappear from the rail
+            // during a restart the user asked for, which reads as Orbit having
+            // quietly dropped them. They are terminal, so nothing tries to talk
+            // to a session that no longer exists, and `severed` is what tells
+            // the rail to draw "we cut this" rather than "this failed".
+            const severed = (snapshot.interruptedAgents ?? []).map((agent) => ({
+                ...agent,
+                status: "cancelled" as const,
+                severed: true,
+                pendingRequestId: undefined,
+                endedAt: agent.endedAt ?? snapshot.at,
+                currentStep: undefined,
+            }));
+            if (severed.length > 0) state.agents = [...severed, ...state.agents];
         });
         console.log(`[orbit] restored ${snapshot.messages.length} messages across a restart`);
         return snapshot;
@@ -4067,6 +4083,7 @@ export class Orchestrator {
             console.warn("[orbit] could not read the evolution log:", error);
         }
         this.proposals = this.disk.loadProposals();
+        this.publishProposals();
         return evolutionBlock(entries, this.proposals);
     }
 
@@ -4136,6 +4153,22 @@ export class Orchestrator {
 
     private persistProposals(): void {
         this.disk.saveProposals(this.proposals);
+        this.publishProposals();
+    }
+
+    /**
+     * Mirror the proposals into the store so the memory section can draw them.
+     *
+     * They are held in a field rather than in state because almost everything
+     * that touches them is prompt assembly. This is the one bridge, called from
+     * the single write choke point above and once at launch, so there is no way
+     * for the list on screen to drift from the list on disk.
+     */
+    private publishProposals(): void {
+        const snapshot = this.proposals.map((proposal) => ({ ...proposal }));
+        this.store.update((state) => {
+            state.proposals = snapshot;
+        });
     }
 
     // MARK: - Interaction log

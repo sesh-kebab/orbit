@@ -18,28 +18,9 @@
  * decides anything itself. It only says "a human should look at this one".
  */
 import type { PermissionRequest } from "@github/copilot-sdk";
+import type { OutboundSend, OutboundSurface } from "../../shared/types.js";
 
-export type OutboundSurface = "mail" | "chat" | "channel" | "invite";
-
-export interface OutboundSend {
-    surface: OutboundSurface;
-    /**
-     * The people this reaches, by name or address, as far as the arguments
-     * reveal. Empty is not "nobody": see `audienceKnown`.
-     */
-    recipients: string[];
-    /**
-     * False when the arguments name a destination but not the people in it, as
-     * a Teams chat id does. The audience is then unverifiable from the request
-     * alone, which is the exact condition that caused the 16 Sep mis-send, so it
-     * is stated on the card rather than passed over in silence.
-     */
-    audienceKnown: boolean;
-    /** The chat, channel or mailbox path being posted into. */
-    target: string;
-    /** The opening of what is about to be sent. */
-    preview?: string;
-}
+export type { OutboundSend, OutboundSurface };
 
 const SEND_PATHS: Array<{ pattern: RegExp; surface: OutboundSurface }> = [
     { pattern: /\/sendmail\b/i, surface: "mail" },

@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import type { AgentView, ChatMessage, OrbitState, PathInfo, PendingRequest, ReplyRef } from "../../shared/types.js";
+import type { AgentView, ChatMessage, OrbitState, OutboundSend, PathInfo, ReplyRef } from "../../shared/types.js";
 import { agentColor, elapsedLabel } from "../mood.js";
+import { isLive } from "../../shared/types.js";
 import { Icon } from "./Icon.js";
 import { parseMarkdown, isPlainText, type Align, type Block, type Inline } from "../markdown.js";
 import { pathCandidates, pathLabel, splitPathSegments, urlLabel } from "../paths.js";
 import { isViewable, openInReader } from "../reader.js";
+import { buildRoster, layoutRoster } from "../roster.js";
 
 interface Props {
     state: OrbitState;
@@ -572,15 +574,17 @@ function RequestCard({
         void window.orbit.answerRequest(request.id, optionId, text);
     };
 
+    const send = request.outbound;
+
     return (
-        <div className="card card-ask">
+        <div className={`card card-ask ${send ? "card-outbound" : ""}`}>
             <div className="card-head">
                 <span className="card-title">{agent?.title ?? "an agent"}</span>
                 <span className="ask-flag">needs you</span>
             </div>
             <p className="ask-question">{request.title}</p>
-            {request.subject && <code className="ask-subject">{request.subject}</code>}
-            {request.detail && <p className="muted small">{request.detail}</p>}
+            {send ? <Audience send={send} /> : request.subject && <code className="ask-subject">{request.subject}</code>}
+            {request.detail && !send && <p className="muted small">{request.detail}</p>}
             <div className="ask-options">
                 {request.options.map((option) => (
                     <button
@@ -608,6 +612,66 @@ function RequestCard({
                     />
                 </form>
             )}
+        </div>
+    );
+}
+
+/**
+ * Who a send is about to reach, in full.
+ *
+ * Every recipient gets its own line and its own number, and there is no height
+ * cap on the list. The two rules are deliberate and they cost a scroll on a
+ * long send, which is the one place in the panel where a scroll is the right
+ * answer: the approve control sits underneath the last name, so it cannot be
+ * reached without the twelfth person having passed under the eye.
+ *
+ * The numbers are there because "12 people" in the headline is a claim and a
+ * numbered list is a thing you can count. They are the cheapest possible way to
+ * let somebody check the claim against the list.
+ */
+function Audience({ send }: { send: OutboundSend }): React.JSX.Element {
+    const count = send.recipients.length;
+    const width = String(count).length;
+
+    return (
+        <div className="audience">
+            <div className="audience-head">
+                <span className="audience-count">
+                    {send.audienceKnown
+                        ? `${count} recipient${count === 1 ? "" : "s"}`
+                        : "recipients unverified"}
+                </span>
+                <code className="audience-target" title={send.target}>
+                    {send.target}
+                </code>
+            </div>
+
+            {count > 0 ? (
+                <ol className="audience-list">
+                    {send.recipients.map((person, index) => (
+                        <li key={`${person}-${index}`}>
+                            <span className="audience-index">
+                                {String(index + 1).padStart(Math.max(2, width), "0")}
+                            </span>
+                            <span className="audience-name">{person}</span>
+                        </li>
+                    ))}
+                </ol>
+            ) : (
+                <p className="audience-blind">
+                    Nothing in this request says who is in it. Check the membership before approving:
+                    an extra person in the thread is not recoverable once sent.
+                </p>
+            )}
+
+            {count > 0 && !send.audienceKnown && (
+                <p className="audience-blind">
+                    These are the names the request happens to carry. It names a destination rather
+                    than its membership, so there may be people in it that this list does not show.
+                </p>
+            )}
+
+            {send.preview && <p className="audience-preview">“{send.preview}”</p>}
         </div>
     );
 }
@@ -692,28 +756,55 @@ function statusWord(status: AgentView["status"]): string {
 }
 
 /** Compact right-aligned pills shown above the buddy when the chat is closed. */
-export function AgentShelf({ agents, requests }: { agents: AgentView[]; requests: PendingRequest[] }): React.JSX.Element {
-    const visible = agents.slice(0, 3);
-    const blockedIds = new Set(requests.map((r) => r.agentId));
+/**
+ * The shelf: what is in flight, when the panel is closed.
+ *
+ * It used to take the first three agents by position and draw `+N more`, which
+ * meant the one thing waiting on you could be the one thing cut, and the
+ * remainder said nothing about what was in it. It now uses the same roster the
+ * rail does, so the order is the board's lane judgement, the pucks are the same
+ * monograms in the same hues, and the remainder wears the worst state it hides.
+ *
+ * That sameness is the point. A thread recognised on the shelf is the same
+ * thread on the rail and in the header, and an identity that only exists inside
+ * one widget is not an identity.
+ */
+export function AgentShelf({ state }: { state: OrbitState }): React.JSX.Element {
+    const blockedIds = new Set(state.requests.map((request) => request.agentId));
+    const live = new Set(state.agents.filter(isLive).map((agent) => agent.id));
+    const roster = buildRoster(state).filter((thread) => live.has(thread.id));
+    const layout = layoutRoster(roster, SHELF_FACES);
+
     return (
         <div className="shelf" data-interactive>
-            {agents.length > 3 && <span className="shelf-more">+{agents.length - 3} more</span>}
-            {visible.map((agent) => {
-                const blocked = blockedIds.has(agent.id) || agent.status === "needs-input";
+            {layout.overflow && (
+                <span
+                    className={`shelf-more ${layout.overflow.state}`}
+                    title={layout.overflow.hidden.map((thread) => thread.title).join("\n")}
+                >
+                    +{layout.overflow.count} more
+                </span>
+            )}
+            {layout.shown.map((thread) => {
+                const blocked = blockedIds.has(thread.id) || thread.state === "needs-you";
                 return (
-                    <div key={agent.id} className={`shelf-pill ${blocked ? "blocked" : ""}`}>
-                        <span
-                            className={`agent-dot small ${blocked ? "" : "spinning"}`}
-                            style={{ borderColor: agentColor(agent.hue, blocked), color: agentColor(agent.hue, blocked) }}
-                        />
-                        <span className="shelf-title">{agent.title}</span>
-                        <span className="shelf-step">{blocked ? "needs you" : `${agent.toolCalls}`}</span>
+                    <div
+                        key={thread.id}
+                        className={`shelf-pill ${blocked ? "blocked" : ""}`}
+                        style={{ ["--puck-hue" as string]: String(Math.round(thread.hue * 360)) }}
+                    >
+                        <span className={`shelf-puck ${blocked ? "blocked" : ""}`}>{thread.monogram}</span>
+                        <span className="shelf-title">{thread.title}</span>
+                        <span className="shelf-step">{blocked ? "needs you" : `${thread.agent.toolCalls}`}</span>
                     </div>
                 );
             })}
         </div>
     );
 }
+
+/** The shelf floats over the desktop, so it stays shorter than the rail does. */
+const SHELF_FACES = 3;
 
 export function useAutoScroll(dependency: unknown): React.RefObject<HTMLDivElement | null> {
     const ref = useRef<HTMLDivElement>(null);

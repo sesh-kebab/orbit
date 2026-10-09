@@ -5,6 +5,7 @@ import { Buddy } from "./components/Buddy.js";
 import { ChatPanel } from "./components/ChatPanel.js";
 import { Icon } from "./components/Icon.js";
 import { AgentShelf } from "./components/Message.js";
+import { buildRoster } from "./roster.js";
 import { deriveMood } from "./mood.js";
 import { onScene } from "./scene.js";
 
@@ -76,6 +77,14 @@ export function App(): React.JSX.Element {
     const mood = deriveMood(state, typing && chatOpen);
     const live = state.agents.filter(isLive);
     const bubble = !chatOpen && state.bubble && state.bubble.until > Date.now() ? state.bubble : undefined;
+    // A bubble raised by an agent's permission request carries the request id,
+    // which is the only handle back to the thread that is speaking.
+    const bubbleAgentId = bubble?.requestId
+        ? state.requests.find((request) => request.id === bubble.requestId)?.agentId
+        : undefined;
+    const bubbleThread = bubbleAgentId
+        ? buildRoster(state).find((thread) => thread.id === bubbleAgentId)
+        : undefined;
 
     return (
         <div className="root">
@@ -90,6 +99,25 @@ export function App(): React.JSX.Element {
                 ) : (
                     bubble && (
                         <div className="speech" data-interactive onClick={() => setChatOpen(true)}>
+                            {/*
+                             * When the bubble is an agent asking for something,
+                             * say which agent in the one way that is readable at
+                             * this size. Without it the bubble is an anonymous
+                             * voice, and the user has to open the panel to find
+                             * out who is talking, which is the opposite of what
+                             * a bubble is for.
+                             */}
+                            {bubbleThread && (
+                                <span
+                                    className="head-puck"
+                                    title={bubbleThread.title}
+                                    style={{
+                                        ["--puck-hue" as string]: String(Math.round(bubbleThread.hue * 360)),
+                                    }}
+                                >
+                                    {bubbleThread.monogram}
+                                </span>
+                            )}
                             <p>{bubble.text}</p>
                             <button
                                 className="icon-button tiny"
@@ -106,7 +134,7 @@ export function App(): React.JSX.Element {
                     )
                 )}
 
-                {!chatOpen && live.length > 0 && <AgentShelf agents={live} requests={state.requests} />}
+                {!chatOpen && live.length > 0 && <AgentShelf state={state} />}
 
                 <BuddyZone
                     onToggle={() => {

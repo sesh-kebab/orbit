@@ -31,6 +31,8 @@ const api: OrbitApi = {
     deleteSchedule: (id: string) => ipcRenderer.invoke("orbit:deleteSchedule", id),
     forgetMemory: (id: string) => ipcRenderer.invoke("orbit:forgetMemory", id),
     resolveOpenItem: (id: string) => ipcRenderer.invoke("orbit:resolveOpenItem", id),
+    answerProposal: (id: string, status: "approved" | "declined") =>
+        ipcRenderer.invoke("orbit:answerProposal", id, status),
     markArtifactOpened: (activityId: string) => ipcRenderer.invoke("orbit:markArtifactOpened", activityId),
     openPersona: () => ipcRenderer.invoke("orbit:openPersona"),
     inspectPaths: (paths: string[]) => ipcRenderer.invoke("orbit:inspectPaths", paths),

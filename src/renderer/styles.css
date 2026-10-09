@@ -151,8 +151,10 @@ body,
     width: 100%;
     flex: 1 1 auto;
     min-height: 0;
+    /* A row now: the rail is a permanent left column, and everything that was
+       the panel is the second child of this row. */
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     background: transparent;
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -224,6 +226,48 @@ body,
     gap: 8px;
     padding: 11px 12px;
     border-bottom: 1px solid var(--line);
+}
+
+/*
+ * Everything that is not the rail. The old panel, unchanged, now living one
+ * level in. It keeps the column layout and the min-height: 0 that lets the
+ * transcript scroll rather than push the composer off the bottom.
+ */
+.panel-main {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+}
+
+/*
+ * The thread's monogram, in the header, in the same hue it wears on the rail.
+ *
+ * This is the whole of break five: identity that stops at the panel edge is not
+ * identity, it is decoration on one widget. The same two letters at 26px in a
+ * column and at 18px in a header are recognisably one thing, and that is what
+ * makes the rail worth reading at all.
+ */
+.head-puck {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    font-size: calc(var(--chat-font-scale) * 8px);
+    font-weight: 700;
+    line-height: 1;
+    padding-bottom: 1px;
+    color: #10131a;
+    background: hsl(var(--puck-hue, 212) 70% 64%);
+}
+
+/* A thread with nothing in the transcript yet. Says where its progress is
+   rather than pretending the thread is empty. */
+.thread-empty {
+    padding: 2px 2px 0;
 }
 
 .status-dot {
@@ -548,6 +592,103 @@ body,
     flex-wrap: wrap;
     gap: 6px;
 }
+
+/*
+ * The audience on an outbound send.
+ *
+ * Deliberately uncapped. Every other scrollable box in the panel exists so a
+ * long thing cannot push the rest of the UI off screen; this one would be
+ * hiding the only fact on the card that cannot be taken back, so the trade runs
+ * the other way and a twelve-person send is simply a taller card. The approve
+ * chip sits below this block in the markup, which is what makes the scroll
+ * mandatory rather than optional.
+ */
+.audience {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 7px 9px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.audience-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+}
+.audience-count {
+    font-size: calc(var(--chat-font-scale) * 10px);
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--danger);
+    flex: none;
+}
+.audience-target {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: calc(var(--chat-font-scale) * 10px);
+    color: var(--dim);
+    margin-left: auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    user-select: text;
+}
+.audience-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    user-select: text;
+}
+.audience-list li {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 2px 0;
+    min-width: 0;
+}
+.audience-list li + li {
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+/* Tabular so the numbers form a column and the list can be counted down. */
+.audience-index {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: calc(var(--chat-font-scale) * 10px);
+    color: var(--dim);
+    flex: none;
+}
+/*
+ * Wraps rather than truncates. A clipped address is the same defect as a hidden
+ * one: "becca.c@…" is not something a human can check.
+ */
+.audience-name {
+    font-size: calc(var(--chat-font-scale) * 11.5px);
+    overflow-wrap: anywhere;
+    min-width: 0;
+}
+.audience-blind {
+    font-size: calc(var(--chat-font-scale) * 11px);
+    color: var(--danger);
+    line-height: 1.4;
+}
+.audience-preview {
+    font-size: calc(var(--chat-font-scale) * 11px);
+    color: var(--muted);
+    line-height: 1.4;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    padding-top: 5px;
+}
+
+/* The one place in the panel where the approve control is below a scroll. */
+.card-outbound .ask-options {
+    padding-top: 1px;
+}
 .ask-freeform input {
     all: unset;
     width: 100%;
@@ -726,6 +867,43 @@ body,
     font-weight: 700;
     color: var(--muted);
 }
+/*
+ * The remainder wears the worst thing it hides, exactly as the rail's overflow
+ * puck does. A quiet `+2 more` sitting on top of a blocked agent is how a
+ * glance at the desktop becomes a wrong answer.
+ */
+.shelf-more.needs-you {
+    border-color: rgba(255, 117, 133, 0.7);
+    color: var(--danger);
+}
+.shelf-more.stopped,
+.shelf-more.severed {
+    border-style: dashed;
+}
+
+/*
+ * The same monogram the rail draws, at the size a floating pill can afford.
+ * It replaced a spinning ring that said only "something is running": true of
+ * every pill on the shelf, and therefore worth none of the space it took.
+ */
+.shelf-puck {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 17px;
+    height: 17px;
+    border-radius: 50%;
+    font-size: calc(var(--chat-font-scale) * 7.5px);
+    font-weight: 700;
+    line-height: 1;
+    padding-bottom: 1px;
+    color: #10131a;
+    background: hsl(var(--puck-hue, 212) 70% 64%);
+}
+.shelf-puck.blocked {
+    background: var(--danger);
+    color: #1a0e11;
+}
 
 .speech {
     position: relative;
@@ -861,17 +1039,29 @@ body,
 }
 
 /*
- * The rail. Two orientations, one set of buttons.
+ * Settings get the panel. Everywhere else the deck is capped so the chat never
+ * disappears, because everywhere else you are looking at the deck in order to
+ * say something about it. Nobody configures a font and then needs three lines
+ * of transcript, and thirteen settings read through a 72% slot is the squashed
+ * list this pane replaced.
+ */
+.deck[data-section="look"] {
+    max-height: 100%;
+}
+
+/*
+ * The rail. Vertical, permanent, and now carrying two kinds of thing.
  *
- * `column` is the original: vertical because inside a wide pane the thing that
- * is scarce is vertical, and a row of tabs spends height to save width.
+ * It used to be a horizontal bar, and that was right while it only held five
+ * section tabs: width is the scarce axis in a 440px panel and a vertical strip
+ * spent 58px of it on five words. It stops being right the moment the rail also
+ * has to hold threads. Threads are a list that grows, and a horizontal list
+ * that grows has nowhere to go.
  *
- * `bar` is what the permanent rail uses, and the trade runs the other way.
- * The rail is now always on screen, above the transcript, and the panel's
- * floor is 440px wide: 58px of permanent vertical rail is 13% of the chat
- * taken out of the column that is read, all day, whether or not Mission
- * Control is open. Height is the cheaper currency here, and one 34px strip
- * buys the width back.
+ * So it is a column again, at 52px rather than the old 58px. The twelve pixels
+ * back are bought with a tighter label: the section word was set at nine point
+ * and is now seven and a half, which is a size you recognise rather than read,
+ * and recognising is all a word you have seen a thousand times needs.
  */
 .deck-rail {
     display: flex;
@@ -880,41 +1070,263 @@ body,
 .deck-rail.column {
     flex-direction: column;
     flex: none;
-    width: 58px;
-    padding: 6px 5px;
+    width: 52px;
+    box-sizing: border-box;
+    /*
+     * Clear of the resize grip, which lives at 6,6 and is 26px square. Without
+     * this the top-left corner of the panel would belong to two controls at
+     * once, and the one that won would be the wrong one. The gap doubles as the
+     * rail's breathing room: the first face wants air above it, not a hard
+     * corner.
+     */
+    padding: 36px 2px 6px;
+    gap: 4px;
     border-right: 1px solid var(--line);
     /*
-     * Every section has to be reachable without scrolling. A rail you scroll
-     * is the thing this replaced. Five items at 33px is 165px, and that is
-     * what sets the window's minimum height: below it the deck's two-thirds
-     * share stops being tall enough to hold them all. It can still scroll, as
-     * a last resort, if the font scale is turned right up.
+     * The sections must all be reachable without scrolling, which is why the
+     * roster above them folds rather than grows. Scrolling is kept as a last
+     * resort for a very large font scale, where even the folded rail is tall.
      */
     overflow-y: auto;
     overflow-x: hidden;
 }
 
-/*
- * Horizontal, and permanent. It never scrolls: five items across 440px have
- * room to spare, and a rail that can hide one of its own sections is worse
- * than a rail that is slightly tight.
- */
-.deck-rail.bar {
-    flex-direction: row;
+/* The faces: Orbit, then the threads, then whatever had to be folded away. */
+.rail-roster {
+    display: flex;
+    flex-direction: column;
     align-items: stretch;
+    gap: 4px;
     flex: none;
-    padding: 4px 8px 5px;
-    border-bottom: 1px solid var(--line);
 }
-.deck-rail.bar .rail-tab {
-    flex-direction: row;
+
+/*
+ * The line between the faces and the sections. It is conditional in the
+ * component, not here: below two faces there is only one group, and a divider
+ * drawn around one group is a rail with an empty compartment in it.
+ */
+.rail-divide {
+    flex: none;
+    height: 1px;
+    margin: 5px 6px 4px;
+    background: var(--line);
+}
+
+.rail-sections {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1px;
+    /* Takes the leftover height so the appearance tab can sit at the floor. */
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+/*
+ * A face on the rail.
+ *
+ * Every one of them is the same object: a round monogram and an optional word
+ * under it. Orbit is one, each thread is one, the folded remainder is one. That
+ * sameness is the whole mechanism by which switching costs a single click from
+ * anywhere, so nothing here is allowed to make one kind look special except the
+ * two marks that carry meaning.
+ */
+.rail-puck {
+    all: unset;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 3px 0 2px;
+    border-radius: 10px;
+    cursor: pointer;
+    box-sizing: border-box;
+    flex: none;
+    color: var(--dim);
+}
+.rail-puck:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--ink);
+}
+.rail-puck:focus-visible {
+    outline: 1px solid var(--line-bright);
+    outline-offset: -1px;
+}
+
+/*
+ * The identity bar: "this is the thread you are in".
+ *
+ * Deliberately not a fill. The section tabs below use a tinted fill to say
+ * "this surface is on screen", and the two states are independent: reading the
+ * log must not look like leaving the thread. Two different marks, one of each
+ * lit at all times, never two of either.
+ */
+.rail-puck.active::before {
+    content: "";
+    position: absolute;
+    left: -2px;
+    top: 5px;
+    bottom: 5px;
+    width: 2px;
+    border-radius: 2px;
+    background: hsl(var(--puck-hue, 212) 70% 64%);
+}
+.rail-puck.orbit.active::before {
+    background: var(--ink);
+}
+
+.puck-face {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    box-sizing: border-box;
+    font-size: calc(var(--chat-font-scale) * 9.5px);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    /* Monograms are two capitals and counts are digits; both read better with
+       the optical centring a slight lift gives them in a circle. */
+    padding-bottom: 1px;
+    /*
+     * The resting treatment, which is also what every desaturated state wears:
+     * an outline, not a fill. Three states carry colour and only three, so the
+     * default has to be genuinely quiet or the colour stops meaning anything.
+     */
+    border: 1px solid var(--line-bright);
+    background: transparent;
+    color: var(--dim);
+    transition:
+        background 120ms ease,
+        border-color 120ms ease,
+        color 120ms ease;
+}
+
+/* The three lit states. Filled, in the thread's own hue, at the weight the
+   state deserves. */
+.puck-face.lit {
+    border-color: transparent;
+    color: #10131a;
+}
+.rail-puck.working .puck-face.lit {
+    background: hsl(var(--puck-hue, 212) 70% 64%);
+}
+/*
+ * Needs you. The only red on the rail, and it means one thing everywhere it
+ * appears: this will not move until he does something. It gives up the thread's
+ * hue to say it, because a thread that is blocked has stopped being about which
+ * thread it is.
+ */
+.rail-puck.needs-you .puck-face {
+    background: var(--danger);
+    border-color: transparent;
+    color: #1a0e11;
+}
+/* Done, with something to open. Hollow rather than filled: finished work is
+   worth noticing once, not worth competing with work in flight. */
+.rail-puck.new .puck-face.lit {
+    background: transparent;
+    border: 1px solid hsl(var(--puck-hue, 212) 70% 64%);
+    color: hsl(var(--puck-hue, 212) 70% 72%);
+    box-shadow: 0 0 0 2px hsl(var(--puck-hue, 212) 70% 64% / 0.16);
+}
+
+/*
+ * Stopped: failed or cancelled.
+ *
+ * Filled rather than outlined, and that is the whole distinction from resting.
+ * Two shades of grey apart is not a difference you can see in a 22px circle at
+ * the edge of your eye, but a disc against a ring is, so the three quiet states
+ * are told apart by shape and not by value: resting is a ring, stopped is a
+ * disc, severed is a broken ring. The fill stays colourless, so the rail's one
+ * promise still holds and grey still means nothing needs you.
+ */
+.rail-puck.stopped .puck-face {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: transparent;
+    color: var(--muted);
+}
+/*
+ * Severed: it was alive when the app restarted, and nobody knows how it ended.
+ * Dashed, because a broken line is the one border that reads as "incomplete"
+ * without being read at all, and faintly hued so the thread is still
+ * identifiable as itself.
+ */
+.rail-puck.severed .puck-face {
+    border-style: dashed;
+    border-color: hsl(var(--puck-hue, 212) 30% 52%);
+    color: var(--muted);
+}
+
+/* Orbit's own face. No icon: there is no mark for Orbit that is better than
+   the ring itself, and a letter O would read as a thread called something. */
+.orbit-face {
+    position: relative;
+    border-color: var(--line-bright);
+}
+.orbit-face::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--dim);
+    transition:
+        background 120ms ease,
+        transform 140ms ease;
+}
+.rail-puck.orbit:hover .orbit-face::after,
+.rail-puck.orbit.active .orbit-face::after {
+    background: var(--ink);
+}
+.rail-puck.orbit.busy .orbit-face::after {
+    background: var(--ink);
+    animation: orbit-pulse 1.6s ease-in-out infinite;
+}
+@keyframes orbit-pulse {
+    0%,
+    100% {
+        transform: scale(1);
+        opacity: 0.55;
+    }
+    50% {
+        transform: scale(1.35);
+        opacity: 1;
+    }
+}
+
+/*
+ * The word under a face.
+ *
+ * It is a rail affordance and nothing more. The monogram is the identity that
+ * travels, and this is the thing that stops a column of initials being a
+ * puzzle on the first day. So it is the first thing dropped when the panel is
+ * short, and a long name is cut rather than shrunk: seven point type is already
+ * the floor at which a word is recognised rather than read.
+ */
+.puck-label {
+    max-width: 48px;
+    /*
+     * A notch under the section words, which is a rule and not an accident: a
+     * section is a place you recognise, a thread is a name you read. The names
+     * are also the longer of the two and the only ones that have to fit an
+     * arbitrary string, so they are the ones that buy the room.
+     */
+    font-size: calc(var(--chat-font-scale) * 7px);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    line-height: 1;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* With labels gone the faces need their own rhythm back, or the column reads
+   as one long strip of circles. */
+.deck-rail.bare .rail-roster {
     gap: 5px;
-    padding: 4px 9px;
-    min-width: 0;
-}
-/* Room for the badge to hang off the icon without clipping on the neighbour. */
-.deck-rail.bar .rail-mark {
-    margin-right: 2px;
 }
 
 /* Pushes appearance to the end of the rail when there is room, and gives up
@@ -958,11 +1370,15 @@ body,
 }
 
 .rail-label {
-    font-size: calc(var(--chat-font-scale) * 9px);
+    max-width: 46px;
+    font-size: calc(var(--chat-font-scale) * 7.5px);
     font-weight: 700;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
     line-height: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /*
@@ -1898,6 +2314,148 @@ body,
     display: flex;
     flex-wrap: wrap;
     gap: 5px;
+}
+
+/*
+ * Thirteen settings in one pane needs grouping or it is a wall. Grouped by what
+ * the setting is about, with real space between groups and almost none inside
+ * them, so the eye finds the right group first and then the right row. The
+ * alternative, one flat list with equal gaps, is the same information arranged
+ * so that reading it is the user's problem.
+ */
+.settings {
+    gap: 14px;
+}
+.setting-group {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+.group-title {
+    font-size: calc(var(--chat-font-scale) * 9px);
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--line);
+}
+
+/* Said once, under the control, in a sentence rather than a tooltip. A setting
+   whose consequences are only in a tooltip is a setting nobody changes. */
+.setting-hint {
+    font-size: calc(var(--chat-font-scale) * 10px);
+    line-height: 1.35;
+    color: var(--dim);
+}
+
+.setting-input {
+    all: unset;
+    box-sizing: border-box;
+    width: 100%;
+    padding: 6px 9px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.04);
+    font-family: var(--chat-font-family);
+    font-size: calc(var(--chat-font-scale) * 11px);
+    color: var(--ink);
+}
+.setting-input::placeholder {
+    color: var(--dim);
+}
+.setting-input:focus {
+    border-color: var(--line-bright);
+    background: rgba(255, 255, 255, 0.07);
+}
+
+/* The switch sits beside its label rather than above it: a boolean is read as
+   one row, and a stacked control makes three booleans look like six things. */
+.setting-toggle {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 9px;
+}
+.setting-body {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+.switch {
+    all: unset;
+    flex: none;
+    position: relative;
+    width: 30px;
+    height: 17px;
+    margin-top: 1px;
+    border-radius: 999px;
+    border: 1px solid var(--line-bright);
+    background: rgba(255, 255, 255, 0.05);
+    cursor: pointer;
+    transition:
+        background 130ms ease,
+        border-color 130ms ease;
+}
+.switch:focus-visible {
+    outline: 1px solid var(--line-bright);
+    outline-offset: 2px;
+}
+.switch-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: var(--dim);
+    transition:
+        transform 130ms ease,
+        background 130ms ease;
+}
+/*
+ * On, in the same green the chips above it use for the option that is chosen.
+ * A pane that says "selected" in green and "on" in grey is asking to be read
+ * twice, and a boolean that is on is exactly a chosen option with two choices.
+ */
+.switch.on {
+    background: rgba(99, 214, 154, 0.26);
+    border-color: transparent;
+}
+.switch.on .switch-knob {
+    transform: translateX(13px);
+    background: var(--ok);
+}
+/* One setting here can cost him something, and it is the only one drawn in the
+   colour that means exactly that everywhere else in the panel. */
+.switch.danger {
+    background: rgba(255, 117, 133, 0.28);
+}
+.switch.danger .switch-knob {
+    background: var(--danger);
+}
+
+/* Proposals, as a second group under what Orbit remembers. */
+.memory-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+}
+.group-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--line);
+}
+.group-head .group-title {
+    padding: 0;
+    border: 0;
+}
+.tag.quiet {
+    color: var(--dim);
 }
 
 /* ---------- dictation ---------- */

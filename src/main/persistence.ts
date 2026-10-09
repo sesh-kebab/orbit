@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
     ActivityEntry,
+    AgentView,
     ChatMessage,
     HistoryEntry,
     LeavePeriod,
@@ -49,6 +50,17 @@ export interface SessionSnapshot {
     lastInteractionAt: number;
     /** Agents that were still live when the restart happened. */
     interrupted: Array<{ title: string; task: string; cwd: string }>;
+    /**
+     * The same agents, whole.
+     *
+     * `interrupted` above is what Orbit tells itself in the next session's
+     * system message, and three fields is all that needs. This is what the
+     * renderer needs: the record, with its hue and its id, so the thread keeps
+     * its face in the rail across the restart instead of silently vanishing and
+     * taking the user's sense of what was running with it. Optional, so a
+     * snapshot written by an older build still restores.
+     */
+    interruptedAgents?: AgentView[];
 }
 
 /**
