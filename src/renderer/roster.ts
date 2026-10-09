@@ -253,3 +253,49 @@ export function layoutRoster(
         overflow: { count: hidden.length, state: worstState(hidden), hidden },
     };
 }
+
+/** The widest a rail label can be before it is cut rather than read. */
+const LABEL_CHARS = 10;
+
+/**
+ * The word a puck wears under its face.
+ *
+ * A 52px rail gives a label about ten characters, and "Telemetry backfill" cut
+ * to ten is "Telemetr...", which is not a word and not a name. A real first
+ * word is both. So a short title is worn whole, and a long one is reduced to
+ * its first word when that word is long enough to carry meaning on its own,
+ * falling back to a hard cut only when the first word is a scrap like "the".
+ */
+export function railLabel(title: string): string {
+    const clean = title.trim().replace(/\s+/gu, " ");
+    if (clean.length <= LABEL_CHARS) return clean;
+    const first = clean.slice(0, clean.indexOf(" "));
+    if (first.length >= 4 && first.length <= LABEL_CHARS) return first;
+    return `${clean.slice(0, LABEL_CHARS - 1).trimEnd()}\u2026`;
+}
+
+/**
+ * Labels for a whole rail at once, because a label is only useful if it is not
+ * the label next to it. Two threads whose first words agree would both read
+ * "Release", so the pair is pushed back to the hard cut, which at least differs
+ * where the names differ.
+ */
+export function labelRoster(threads: RosterThread[]): Map<string, string> {
+    const labels = new Map<string, string>();
+    const seen = new Map<string, string[]>();
+    for (const thread of threads) {
+        const label = railLabel(thread.title);
+        labels.set(thread.id, label);
+        seen.set(label, [...(seen.get(label) ?? []), thread.id]);
+    }
+    for (const [label, ids] of seen) {
+        if (ids.length < 2) continue;
+        for (const id of ids) {
+            const thread = threads.find((candidate) => candidate.id === id);
+            if (!thread) continue;
+            const cut = `${thread.title.trim().slice(0, LABEL_CHARS - 1).trimEnd()}\u2026`;
+            labels.set(id, cut === `${label}\u2026` ? label : cut);
+        }
+    }
+    return labels;
+}

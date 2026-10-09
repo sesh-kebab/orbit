@@ -25,7 +25,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import type { DeckSection, OrbitState } from "../../shared/types.js";
-import type { PuckState, RosterLayout, RosterThread } from "../roster.js";
+import { labelRoster, type PuckState, type RosterLayout, type RosterThread } from "../roster.js";
 import { Icon, type IconName } from "./Icon.js";
 
 export interface SectionDef {
@@ -166,6 +166,8 @@ const ROSTER_ITEM_BARE = 31;
 const MAX_FACES = 8;
 /** Below this many labelled slots the labels are not worth their height. */
 const LABEL_FLOOR = 4;
+/** The divider between the faces and the sections, margins included. */
+const RAIL_DIVIDE = 10;
 
 export function NavRail({
     state,
@@ -197,6 +199,10 @@ export function NavRail({
     const railRef = useRef<HTMLElement | null>(null);
     const navRef = useRef<HTMLDivElement | null>(null);
     const [labelled, setLabelled] = useState(true);
+    // Read inside the measurement without resubscribing it: the measurement
+    // changes this, so depending on it would mean a loop.
+    const labelledRef = useRef(true);
+    labelledRef.current = labelled;
 
     // Capacity is measured rather than assumed. The panel resizes down to a
     // 660px floor and the arithmetic that holds at the floor does not hold at
@@ -208,9 +214,29 @@ export function NavRail({
         if (!rail || !nav) return;
 
         const measure = (): void => {
-            const space = rail.clientHeight - nav.offsetHeight;
-            const withLabels = Math.floor(space / ROSTER_ITEM) - 1;
-            const bare = Math.floor(space / ROSTER_ITEM_BARE) - 1;
+            // The section column is told to take the leftover height, so its
+            // rendered height is the answer to this question rather than an
+            // input to it. What is wanted is what the buttons actually need,
+            // which is the sum of the buttons themselves.
+            const buttons = Array.from(nav.children).filter(
+                (child): child is HTMLElement =>
+                    child instanceof HTMLElement && !child.classList.contains("rail-spacer"),
+            );
+            const sections = buttons.reduce((total, button) => total + button.offsetHeight, 0);
+            // Both candidate heights are derived from whichever one is on
+            // screen, so the answer does not depend on the answer last time.
+            const shed = buttons.length * (ROSTER_ITEM - ROSTER_ITEM_BARE);
+            const navLabelled = labelledRef.current ? sections : sections + shed;
+            const navBare = labelledRef.current ? sections - shed : sections;
+
+            const style = getComputedStyle(rail);
+            const room =
+                rail.clientHeight -
+                parseFloat(style.paddingTop || "0") -
+                parseFloat(style.paddingBottom || "0") -
+                RAIL_DIVIDE;
+            const withLabels = Math.floor((room - navLabelled) / ROSTER_ITEM) - 1;
+            const bare = Math.floor((room - navBare) / ROSTER_ITEM_BARE) - 1;
             // Labels go before faces do. A nameless puck is still a thread you
             // can see and click; a folded one is a thread you cannot.
             const keepLabels = withLabels >= LABEL_FLOOR;
@@ -225,6 +251,7 @@ export function NavRail({
     }, [onMeasure]);
 
     const faces = layout.shown.length + (layout.overflow ? 1 : 0);
+    const labels = labelRoster(layout.shown);
 
     return (
         <nav
@@ -243,6 +270,7 @@ export function NavRail({
                     <ThreadPuck
                         key={thread.id}
                         thread={thread}
+                        label={labels.get(thread.id) ?? thread.title}
                         active={thread.id === activeThreadId}
                         labelled={labelled}
                         onSelect={() => onSelectThread(thread.id)}
@@ -343,11 +371,14 @@ function isLit(state: PuckState): boolean {
 
 function ThreadPuck({
     thread,
+    label,
     active,
     labelled,
     onSelect,
 }: {
     thread: RosterThread;
+    /** The rail's short form of the title, kept distinct from its neighbours. */
+    label: string;
     active: boolean;
     labelled: boolean;
     onSelect(): void;
@@ -373,7 +404,7 @@ function ThreadPuck({
              * already a glance away in the header, and six point type is not a
              * name.
              */}
-            {labelled && <span className="puck-label">{thread.title}</span>}
+            {labelled && <span className="puck-label">{label}</span>}
         </button>
     );
 }

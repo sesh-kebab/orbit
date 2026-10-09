@@ -18,9 +18,11 @@
  */
 import {
     buildRoster,
+    labelRoster,
     layoutRoster,
     monogram,
     puckState,
+    railLabel,
     sortRoster,
     worstState,
     type RosterThread,
@@ -328,6 +330,44 @@ check(
 const noRoom = layoutRoster(crowded, 0);
 check("zero capacity still admits what exists", noRoom.overflow?.count === crowded.length);
 check("zero capacity draws no faces", noRoom.shown.length === 0);
+
+// ── Labels ───────────────────────────────────────────────────────────────────
+//
+// A 52px rail gives a label about ten characters. The question every case here
+// asks is the same one: is what the user ends up reading a word, or is it the
+// first eight letters of a word, which is a puzzle.
+
+check("a short name is worn whole", railLabel("Docs tidy") === "Docs tidy");
+check("a name of exactly ten is worn whole", railLabel("Dependency") === "Dependency");
+check("a long name falls back to its first word", railLabel("Telemetry backfill") === "Telemetry");
+check("the first word is taken whole, not cut", railLabel("Meeting prep for Monday") === "Meeting");
+check("a ten letter first word still fits", railLabel("Dependency audit") === "Dependency");
+check(
+    "a first word too long to be a label is cut",
+    railLabel("Reconciliation of the ledger") === "Reconcili\u2026",
+    railLabel("Reconciliation of the ledger"),
+);
+check(
+    "a scrap of a first word is not a label",
+    railLabel("The quarterly headcount case") === "The quart\u2026",
+    railLabel("The quarterly headcount case"),
+);
+check("surrounding space is not part of the name", railLabel("  Docs tidy  ") === "Docs tidy");
+
+const twins: RosterThread[] = [
+    { ...crowded[0], id: "t1", title: "Release notes draft" },
+    { ...crowded[0], id: "t2", title: "Release index rebuild" },
+    { ...crowded[0], id: "t3", title: "Telemetry backfill" },
+];
+const labels = labelRoster(twins);
+check(
+    "two threads never wear the same label",
+    labels.get("t1") !== labels.get("t2"),
+    [labels.get("t1"), labels.get("t2")],
+);
+check("a collision falls back to the cut form", labels.get("t1") === "Release n\u2026", labels.get("t1"));
+check("the thread that did not collide keeps its word", labels.get("t3") === "Telemetry");
+check("every thread gets a label", labels.size === twins.length);
 
 // ── Report ───────────────────────────────────────────────────────────────────
 

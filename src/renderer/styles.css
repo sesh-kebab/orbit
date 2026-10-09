@@ -1079,7 +1079,7 @@ body,
      * rail's breathing room: the first face wants air above it, not a hard
      * corner.
      */
-    padding: 36px 4px 6px;
+    padding: 36px 2px 6px;
     gap: 4px;
     border-right: 1px solid var(--line);
     /*
@@ -1096,7 +1096,7 @@ body,
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    gap: 3px;
+    gap: 4px;
     flex: none;
 }
 
@@ -1138,7 +1138,7 @@ body,
     flex-direction: column;
     align-items: center;
     gap: 2px;
-    padding: 3px 2px 2px;
+    padding: 3px 0 2px;
     border-radius: 10px;
     cursor: pointer;
     box-sizing: border-box;
@@ -1233,12 +1233,20 @@ body,
     box-shadow: 0 0 0 2px hsl(var(--puck-hue, 212) 70% 64% / 0.16);
 }
 
-/* Stopped: failed or cancelled. A solid dim ring, because it is over and the
-   only question left is whether to look at why. */
+/*
+ * Stopped: failed or cancelled.
+ *
+ * Filled rather than outlined, and that is the whole distinction from resting.
+ * Two shades of grey apart is not a difference you can see in a 22px circle at
+ * the edge of your eye, but a disc against a ring is, so the three quiet states
+ * are told apart by shape and not by value: resting is a ring, stopped is a
+ * disc, severed is a broken ring. The fill stays colourless, so the rail's one
+ * promise still holds and grey still means nothing needs you.
+ */
 .rail-puck.stopped .puck-face {
-    border-color: var(--line-bright);
+    background: rgba(255, 255, 255, 0.1);
+    border-color: transparent;
     color: var(--muted);
-    opacity: 0.75;
 }
 /*
  * Severed: it was alive when the app restarted, and nobody knows how it ended.
@@ -1298,10 +1306,16 @@ body,
  * the floor at which a word is recognised rather than read.
  */
 .puck-label {
-    max-width: 44px;
-    font-size: calc(var(--chat-font-scale) * 7.5px);
+    max-width: 48px;
+    /*
+     * A notch under the section words, which is a rule and not an accident: a
+     * section is a place you recognise, a thread is a name you read. The names
+     * are also the longer of the two and the only ones that have to fit an
+     * arbitrary string, so they are the ones that buy the room.
+     */
+    font-size: calc(var(--chat-font-scale) * 7px);
     font-weight: 600;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.01em;
     line-height: 1;
     text-align: center;
     overflow: hidden;
@@ -2399,13 +2413,18 @@ body,
         transform 130ms ease,
         background 130ms ease;
 }
+/*
+ * On, in the same green the chips above it use for the option that is chosen.
+ * A pane that says "selected" in green and "on" in grey is asking to be read
+ * twice, and a boolean that is on is exactly a chosen option with two choices.
+ */
 .switch.on {
-    background: rgba(255, 255, 255, 0.16);
+    background: rgba(99, 214, 154, 0.26);
     border-color: transparent;
 }
 .switch.on .switch-knob {
     transform: translateX(13px);
-    background: var(--ink);
+    background: var(--ok);
 }
 /* One setting here can cost him something, and it is the only one drawn in the
    colour that means exactly that everywhere else in the panel. */

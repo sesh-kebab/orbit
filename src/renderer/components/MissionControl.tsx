@@ -321,6 +321,12 @@ function MemoryTab({ state }: { state: OrbitState }): React.JSX.Element {
  * the eye to skip that part of the rail. Memory is already the place for "what
  * Orbit knows and thinks", so this is the nearest honest home.
  *
+ * The group is titled for what it holds rather than for the section it sits in.
+ * "about me" was the first title and it was wrong in the one way that matters:
+ * directly above it is a list of things Orbit remembers about the user, so a
+ * heading saying "about me" reads as a label for that list, and the proposals
+ * underneath look like more of the same.
+ *
  * Only `proposed` is listed, and only approve or decline are offered. Shipping
  * is a claim about code that landed and belongs to whatever can name the branch
  * and the commit, which a button cannot.
@@ -333,7 +339,7 @@ function ProposalList({ proposals }: { proposals: readonly Proposal[] }): React.
     return (
         <div className="memory-group">
             <div className="group-head">
-                <span className="group-title">about me</span>
+                <span className="group-title">changes Orbit is proposing</span>
                 <span className="muted small">
                     {open.length > 0
                         ? `${open.length} waiting on an answer`
