@@ -287,16 +287,17 @@ export function dailySlotOn(cadence: Cadence, now: number = Date.now()): number 
 export function catchUpDecision(
     schedule: Schedule,
     now: number = Date.now(),
+    leave: LeavePeriod[] = [],
 ): { run: boolean; nextRunAt: number; slotAt?: number; missed?: boolean } {
     if (schedule.cadence.kind !== "daily") {
         // Intervals never replay a backlog, one-offs are handled by the caller.
-        return { run: false, nextRunAt: nextRunFor(schedule, now) };
+        return { run: false, nextRunAt: allowedFrom(schedule, leave, nextRunFor(schedule, now)) };
     }
 
     const slot = dailySlotOn(schedule.cadence, now)!;
 
     // Slot still ahead of us today: nothing was missed, just wait for it.
-    if (slot > now) return { run: false, nextRunAt: slot, slotAt: slot };
+    if (slot > now) return { run: false, nextRunAt: allowedFrom(schedule, leave, slot), slotAt: slot };
 
     const missedBy = now - slot;
     // A dormant daily must not be woken by a slot it was never due to serve.
@@ -310,8 +311,39 @@ export function catchUpDecision(
     // or already served is not missed, it is simply not owed.
     const missed = owed && !run;
     // Having run (or given up on) today's slot, the next one is tomorrow's —
-    // or later still, if the watcher has earned a stretch.
-    return { run, nextRunAt: withDailyDormancy(schedule, slot + DAY_MS), slotAt: slot, missed };
+    // or later still, if the watcher has earned a stretch, or later again if
+    // tomorrow is a day this watcher is not allowed to speak on.
+    return {
+        run,
+        nextRunAt: allowedFrom(schedule, leave, withDailyDormancy(schedule, slot + DAY_MS)),
+        slotAt: slot,
+        missed,
+    };
+}
+
+/**
+ * Push a computed next-run past any day the watcher is not allowed to run.
+ *
+ * This is the same walk `nextAllowedRunFor` does, applied to a candidate that
+ * has already been worked out rather than deriving one from the cadence.
+ *
+ * It exists because `nextRunAt` is read in two different registers. The clock
+ * uses it as "wake up and look", and a suppressed watcher waking to be told it
+ * is Friday is harmless: `skipSuppressed` turns it away and rolls it on. But
+ * every *reading* surface takes the same field as a statement of fact, and that
+ * statement was wrong. On 8 Oct a Thursday-only watcher sat with a Friday
+ * `nextRunAt`, so `orbit_list_schedules` reported it as running tomorrow and
+ * the board offered the user an anticipation card promising the same. Neither
+ * was ever going to happen. A field that means "when this runs" must not hold a
+ * time the rules have already ruled out, or the honest answer depends on which
+ * caller you ask.
+ */
+function allowedFrom(schedule: Schedule, leave: LeavePeriod[], candidate: number): number {
+    if (!hasSuppression(schedule)) return candidate;
+    const cadence = schedule.cadence;
+    return nextAllowedRun(schedule, leave, candidate, (dayStart) =>
+        cadence.kind === "daily" ? dailySlotOn(cadence, dayStart)! : dayStart,
+    );
 }
 
 /**
@@ -356,12 +388,7 @@ export function nextAllowedRunFor(
     leave: LeavePeriod[],
     from = Date.now(),
 ): number {
-    const candidate = nextRunFor(schedule, from);
-    if (!hasSuppression(schedule)) return candidate;
-    const cadence = schedule.cadence;
-    return nextAllowedRun(schedule, leave, candidate, (dayStart) =>
-        cadence.kind === "daily" ? dailySlotOn(cadence, dayStart)! : dayStart,
-    );
+    return allowedFrom(schedule, leave, nextRunFor(schedule, from));
 }
 
 /**
