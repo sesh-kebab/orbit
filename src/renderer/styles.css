@@ -867,6 +867,43 @@ body,
     font-weight: 700;
     color: var(--muted);
 }
+/*
+ * The remainder wears the worst thing it hides, exactly as the rail's overflow
+ * puck does. A quiet `+2 more` sitting on top of a blocked agent is how a
+ * glance at the desktop becomes a wrong answer.
+ */
+.shelf-more.needs-you {
+    border-color: rgba(255, 117, 133, 0.7);
+    color: var(--danger);
+}
+.shelf-more.stopped,
+.shelf-more.severed {
+    border-style: dashed;
+}
+
+/*
+ * The same monogram the rail draws, at the size a floating pill can afford.
+ * It replaced a spinning ring that said only "something is running": true of
+ * every pill on the shelf, and therefore worth none of the space it took.
+ */
+.shelf-puck {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 17px;
+    height: 17px;
+    border-radius: 50%;
+    font-size: calc(var(--chat-font-scale) * 7.5px);
+    font-weight: 700;
+    line-height: 1;
+    padding-bottom: 1px;
+    color: #10131a;
+    background: hsl(var(--puck-hue, 212) 70% 64%);
+}
+.shelf-puck.blocked {
+    background: var(--danger);
+    color: #1a0e11;
+}
 
 .speech {
     position: relative;
@@ -999,6 +1036,17 @@ body,
     flex: 2 1 0;
     min-height: 0;
     max-height: 72%;
+}
+
+/*
+ * Settings get the panel. Everywhere else the deck is capped so the chat never
+ * disappears, because everywhere else you are looking at the deck in order to
+ * say something about it. Nobody configures a font and then needs three lines
+ * of transcript, and thirteen settings read through a 72% slot is the squashed
+ * list this pane replaced.
+ */
+.deck[data-section="look"] {
+    max-height: 100%;
 }
 
 /*
@@ -2252,6 +2300,143 @@ body,
     display: flex;
     flex-wrap: wrap;
     gap: 5px;
+}
+
+/*
+ * Thirteen settings in one pane needs grouping or it is a wall. Grouped by what
+ * the setting is about, with real space between groups and almost none inside
+ * them, so the eye finds the right group first and then the right row. The
+ * alternative, one flat list with equal gaps, is the same information arranged
+ * so that reading it is the user's problem.
+ */
+.settings {
+    gap: 14px;
+}
+.setting-group {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+.group-title {
+    font-size: calc(var(--chat-font-scale) * 9px);
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--line);
+}
+
+/* Said once, under the control, in a sentence rather than a tooltip. A setting
+   whose consequences are only in a tooltip is a setting nobody changes. */
+.setting-hint {
+    font-size: calc(var(--chat-font-scale) * 10px);
+    line-height: 1.35;
+    color: var(--dim);
+}
+
+.setting-input {
+    all: unset;
+    box-sizing: border-box;
+    width: 100%;
+    padding: 6px 9px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.04);
+    font-family: var(--chat-font-family);
+    font-size: calc(var(--chat-font-scale) * 11px);
+    color: var(--ink);
+}
+.setting-input::placeholder {
+    color: var(--dim);
+}
+.setting-input:focus {
+    border-color: var(--line-bright);
+    background: rgba(255, 255, 255, 0.07);
+}
+
+/* The switch sits beside its label rather than above it: a boolean is read as
+   one row, and a stacked control makes three booleans look like six things. */
+.setting-toggle {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 9px;
+}
+.setting-body {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+.switch {
+    all: unset;
+    flex: none;
+    position: relative;
+    width: 30px;
+    height: 17px;
+    margin-top: 1px;
+    border-radius: 999px;
+    border: 1px solid var(--line-bright);
+    background: rgba(255, 255, 255, 0.05);
+    cursor: pointer;
+    transition:
+        background 130ms ease,
+        border-color 130ms ease;
+}
+.switch:focus-visible {
+    outline: 1px solid var(--line-bright);
+    outline-offset: 2px;
+}
+.switch-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: var(--dim);
+    transition:
+        transform 130ms ease,
+        background 130ms ease;
+}
+.switch.on {
+    background: rgba(255, 255, 255, 0.16);
+    border-color: transparent;
+}
+.switch.on .switch-knob {
+    transform: translateX(13px);
+    background: var(--ink);
+}
+/* One setting here can cost him something, and it is the only one drawn in the
+   colour that means exactly that everywhere else in the panel. */
+.switch.danger {
+    background: rgba(255, 117, 133, 0.28);
+}
+.switch.danger .switch-knob {
+    background: var(--danger);
+}
+
+/* Proposals, as a second group under what Orbit remembers. */
+.memory-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+}
+.group-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--line);
+}
+.group-head .group-title {
+    padding: 0;
+    border: 0;
+}
+.tag.quiet {
+    color: var(--dim);
 }
 
 /* ---------- dictation ---------- */

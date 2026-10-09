@@ -143,6 +143,17 @@ check(
     mailCard.detail,
 );
 
+// The card hands the audience to the panel as a list rather than as a sentence,
+// because a sentence is what truncated four people into "and 2 others" in the
+// first place. The renderer draws one line per name from this.
+check("the card carries the audience as data", mailCard.send?.recipients.length === 2, mailCard.send);
+check("and says where it is going", mailCard.send?.surface === "mail", mailCard.send);
+check(
+    "the approve button carries the count, so it cannot be read as sending to one",
+    permissionOptions(mailCard)[0]?.label === "Send to 2",
+    permissionOptions(mailCard)[0],
+);
+
 const onePerson = mcp("do_action", {
     actionUrl: "/me/messages/AAA/reply",
     jsonBody: { comment: "Sounds right to me." },

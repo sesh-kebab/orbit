@@ -21,6 +21,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MissionControl } from "../src/renderer/components/MissionControl.js";
 import { Message } from "../src/renderer/components/Message.js";
 import { NavRail, railState } from "../src/renderer/components/NavRail.js";
+import { buildRoster, layoutRoster } from "../src/renderer/roster.js";
 import { DECK_SECTIONS, isDeckSection, type ChatMessage, type DeckSection, type MemoryNote, type OrbitState } from "../src/shared/types.js";
 import { MEMORY_CATEGORIES } from "../src/shared/memoryText.js";
 import { AGENTS, EPOCH, MEMORIES, REQUEST, SCHEDULES, baseState } from "../tools/capture/demo.js";
@@ -46,8 +47,9 @@ function ok(what: string, condition: boolean): void {
  * Mission Control alone would no longer render the thing half these checks are
  * about.
  */
-function render(state: OrbitState, open = true): string {
+function render(state: OrbitState, open = true, capacity = 8, activeThreadId?: string): string {
     const section = isDeckSection(state.settings.deckSection) ? state.settings.deckSection : "board";
+    const layout = layoutRoster(buildRoster(state), capacity, activeThreadId);
     return renderToStaticMarkup(
         createElement(
             "div",
@@ -56,8 +58,11 @@ function render(state: OrbitState, open = true): string {
                 state,
                 section,
                 open,
-                orientation: "bar" as const,
+                layout,
+                activeThreadId,
                 onSelect: () => undefined,
+                onSelectThread: () => undefined,
+                onMeasure: () => undefined,
             }),
             open ? createElement(MissionControl, { state, section }) : undefined,
         ),
@@ -94,7 +99,7 @@ function posed(patch: Partial<OrbitState> = {}, section: DeckSection = "board"):
     // complicated application was not. Six is five plus the viewer, which is a
     // place the user is sent to by clicking a file rather than a new idea.
     check("six sections, no more", DECK_SECTIONS.length, 6);
-    ok("the rail is a landmark", markup.includes('aria-label="Mission control sections"'));
+    ok("the rail is a landmark", markup.includes('aria-label="Threads and sections"'));
 
     for (const label of ["board", "work", "memory", "read", "log", "look"]) {
         ok(`the rail carries "${label}"`, markup.includes(`class="rail-label">${label}<`));
@@ -132,9 +137,9 @@ function posed(patch: Partial<OrbitState> = {}, section: DeckSection = "board"):
     const blocked = render(posed({ agents: [AGENTS.flaky], requests: [REQUEST] }), false);
     ok("a blocked agent still shows through a closed pane", blocked.includes("rail-badge attention"));
 
-    // Horizontal, because the panel floor is 440px wide and the vertical rail
-    // took 58px of it away from the transcript permanently.
-    ok("the permanent rail is the horizontal one", shut.includes('class="deck-rail bar"'));
+    // Vertical, because the rail now carries threads as well as sections and a
+    // horizontal bar has nowhere to put eight faces with names under them.
+    ok("the permanent rail is the vertical one", shut.includes('class="deck-rail column'));
 }
 
 // MARK: - One section at a time
@@ -485,6 +490,176 @@ function posed(patch: Partial<OrbitState> = {}, section: DeckSection = "board"):
     // Prose must not grow one.
     const prose = draw({ ...fenced, text: "No code here, just a sentence." });
     check("prose gets no copy control", count(prose, "md-copy"), 0);
+}
+
+// MARK: - The roster rail draws threads, not just sections
+
+{
+    const busy = posed({ agents: [AGENTS.flaky, AGENTS.deps], requests: [REQUEST] });
+    const markup = render(busy);
+
+    ok("Orbit itself is the first puck", markup.includes('class="rail-puck orbit'));
+    ok("delegated work appears as faces", markup.includes('class="rail-puck'));
+    check("every live agent gets a face", count(markup, 'class="rail-puck thread'), 2);
+    check("Orbit's own face is drawn alongside them, not instead", count(markup, 'class="puck-face '), 3);
+    ok("the faces carry names, not only colour", markup.includes('class="puck-label"'));
+    const blockedThread = render(
+        posed({ agents: [{ ...AGENTS.flaky, status: "needs-input" }, AGENTS.deps], requests: [REQUEST] }),
+    );
+    ok("a blocked thread says so to a screen reader", blockedThread.includes("needs you"));
+    ok("and carries it in a class the stylesheet can colour", blockedThread.includes("rail-puck thread needs-you"));
+
+    // Break 1: a rail with one thing in it must not look like a broken rail.
+    const alone = render(posed({ agents: [AGENTS.flaky], requests: [], schedules: [] }));
+    check("a single thread draws no divider", count(alone, 'class="rail-divide"'), 0);
+    check("several threads do", count(markup, 'class="rail-divide"'), 1);
+
+    const nothing = posed({ agents: [], requests: [], schedules: [] });
+    check("an empty roster draws no divider either", count(render(nothing), 'class="rail-divide"'), 0);
+    ok("but Orbit is still there to talk to", render(nothing).includes('class="rail-puck orbit'));
+
+    // Break 3: the thread mark and the section mark are different marks, so
+    // reading the log while working in a thread leaves both legible.
+    const both = render(busy, true, 8, AGENTS.deps.id);
+    ok("the thread being worked in is marked", both.includes('class="rail-puck thread working active"'));
+    ok("and said out loud, not only drawn", both.includes('aria-current="true"'));
+    check("and the section mark is still its own", count(both, 'aria-current="page"'), 1);
+
+    // Break 2: the overflow puck wears what it hides rather than hiding it.
+    const tight = render(busy, true, 1);
+    ok("a rail out of room draws an overflow puck", tight.includes('class="rail-puck overflow'));
+    ok("which says what it is covering for", tight.includes("more threads, worst of them"));
+}
+
+// MARK: - Every setting, not three of them
+
+{
+    const look = render(posed({}, "look"));
+    const words = text(look);
+
+    for (const group of ["appearance", "what Orbit may do on its own", "where it works", "how long it waits"]) {
+        ok(`settings are grouped: "${group}"`, words.includes(group));
+    }
+
+    // The complaint this fixes: ten of the thirteen existed only in a JSON file.
+    for (const label of [
+        "font",
+        "size",
+        "opacity",
+        "approve everything",
+        "approve reading",
+        "meeting heads-up",
+        "model",
+        "workspace",
+        "workspace repo",
+        "copilot path",
+        "waiting for you",
+        "one agent run",
+    ]) {
+        ok(`"${label}" is reachable without editing JSON`, words.includes(label));
+    }
+    ok("the remembered section is named rather than silently omitted", words.includes("last looking at"));
+
+    check("the three booleans are real switches", count(look, 'role="switch"'), 3);
+    ok("a switch says which way it is facing", look.includes('aria-checked="false"'));
+    check("paths are text fields, not chips", count(look, 'class="setting-input"'), 3);
+    ok("and every control says what it costs", look.includes('class="setting-hint"'));
+
+    const reckless = render(posed({ settings: { ...baseState().settings, yolo: true } }, "look"));
+    ok("approving everything is drawn in the colour that means danger", reckless.includes("switch on danger"));
+}
+
+// MARK: - Proposals have somewhere to be
+
+{
+    const proposals = [
+        {
+            id: "p-1",
+            text: "Teach the rail to carry threads as well as sections.",
+            status: "proposed" as const,
+            source: "nightly self-reflection",
+            raisedAt: EPOCH - 90_000,
+        },
+        {
+            id: "p-2",
+            text: "Show every recipient on an outbound card.",
+            status: "shipped" as const,
+            source: "nightly self-reflection",
+            raisedAt: EPOCH - 900_000,
+        },
+    ];
+    const markup = render(posed({ proposals }, "memory"));
+    const words = text(markup);
+
+    ok("a proposal is drawn where memory is", words.includes("Teach the rail to carry threads"));
+    ok("it is a group of its own, not mixed into the notes", markup.includes('class="memory-group"'));
+    ok("what Orbit remembers is still there too", markup.includes('class="memory-row'));
+    ok("a proposal can be approved from the panel", markup.includes('aria-label="Approve this proposal"'));
+    ok("and declined", markup.includes('aria-label="Decline this proposal"'));
+    ok("a decided proposal is not listed again", !words.includes("Show every recipient on an outbound card"));
+    ok("the group says how many are waiting", words.includes("1 waiting on an answer"));
+    ok(
+        "and counts shipped work once nothing is waiting",
+        text(render(posed({ proposals: proposals.slice(1) }, "memory"))).includes("1 shipped, nothing waiting"),
+    );
+    check("a decided proposal offers no buttons", count(markup, 'aria-label="Approve this proposal"'), 1);
+
+    // Break 7 is only fixed if the section says it has something, too.
+    // Quietly: a proposal is Orbit asking for its own benefit, and it must not
+    // shout in the same voice as his own blocked work.
+    check("the memory section says it has something", railState(posed({ proposals }), "memory").dot, true);
+    check("but never in the urgent colour", railState(posed({ proposals }), "memory").attention, undefined);
+
+    const none = render(posed({ proposals: [] }, "memory"));
+    ok("no proposals, no group", !none.includes('class="memory-group"'));
+}
+
+// MARK: - The outbound card names everybody
+
+{
+    const names = [
+        "priya.nair@contoso.com",
+        "tomas.lindqvist@contoso.com",
+        "a-very-long-display-name-that-wraps@partner.example",
+        "finance-all@contoso.com",
+        "jo@contoso.com",
+        "sam@contoso.com",
+        "kit@contoso.com",
+    ];
+    const outbound = {
+        ...REQUEST,
+        id: "r-out",
+        title: "Send the summary to the finance thread?",
+        subject: "7 recipients",
+        outbound: {
+            surface: "mail" as const,
+            target: "Finance weekly",
+            recipients: names,
+            preview: "Here is the quarter summary you asked for.",
+        },
+    };
+    const state = baseState({ requests: [outbound], agents: [AGENTS.flaky] });
+    const message: ChatMessage = {
+        id: "m-out",
+        role: "orbit",
+        text: "",
+        kind: { type: "request", requestId: outbound.id },
+        at: EPOCH,
+    };
+    const markup = renderToStaticMarkup(createElement(Message, { state, message }));
+    const words = text(markup);
+
+    // The whole point: not "7 recipients", but seven recipients.
+    for (const name of names) ok(`"${name}" is on screen before sending`, words.includes(name));
+    check("each one is its own line", count(markup, "<li"), names.length);
+    ok("the list is a list, so a screen reader counts it", markup.includes('class="audience-list"'));
+    ok("the card knows it is outbound", markup.includes("card-outbound"));
+    ok("the audience is counted at the head of the list", words.includes("7 "));
+    ok("the text being sent is shown too", words.includes("Here is the quarter summary"));
+    ok("and the surface is named", words.includes("Finance weekly"));
+
+    // Nothing truncates, so no "and 4 others" anywhere.
+    ok("nobody is summarised away", !/\d+ (more|others)/.test(words));
 }
 
 if (failures.length > 0) {

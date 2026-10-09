@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import type { AgentView, ChatMessage, OrbitState, OutboundSend, PathInfo, PendingRequest, ReplyRef } from "../../shared/types.js";
+import type { AgentView, ChatMessage, OrbitState, OutboundSend, PathInfo, ReplyRef } from "../../shared/types.js";
 import { agentColor, elapsedLabel } from "../mood.js";
+import { isLive } from "../../shared/types.js";
 import { Icon } from "./Icon.js";
 import { parseMarkdown, isPlainText, type Align, type Block, type Inline } from "../markdown.js";
 import { pathCandidates, pathLabel, splitPathSegments, urlLabel } from "../paths.js";
 import { isViewable, openInReader } from "../reader.js";
+import { buildRoster, layoutRoster } from "../roster.js";
 
 interface Props {
     state: OrbitState;
@@ -754,28 +756,55 @@ function statusWord(status: AgentView["status"]): string {
 }
 
 /** Compact right-aligned pills shown above the buddy when the chat is closed. */
-export function AgentShelf({ agents, requests }: { agents: AgentView[]; requests: PendingRequest[] }): React.JSX.Element {
-    const visible = agents.slice(0, 3);
-    const blockedIds = new Set(requests.map((r) => r.agentId));
+/**
+ * The shelf: what is in flight, when the panel is closed.
+ *
+ * It used to take the first three agents by position and draw `+N more`, which
+ * meant the one thing waiting on you could be the one thing cut, and the
+ * remainder said nothing about what was in it. It now uses the same roster the
+ * rail does, so the order is the board's lane judgement, the pucks are the same
+ * monograms in the same hues, and the remainder wears the worst state it hides.
+ *
+ * That sameness is the point. A thread recognised on the shelf is the same
+ * thread on the rail and in the header, and an identity that only exists inside
+ * one widget is not an identity.
+ */
+export function AgentShelf({ state }: { state: OrbitState }): React.JSX.Element {
+    const blockedIds = new Set(state.requests.map((request) => request.agentId));
+    const live = new Set(state.agents.filter(isLive).map((agent) => agent.id));
+    const roster = buildRoster(state).filter((thread) => live.has(thread.id));
+    const layout = layoutRoster(roster, SHELF_FACES);
+
     return (
         <div className="shelf" data-interactive>
-            {agents.length > 3 && <span className="shelf-more">+{agents.length - 3} more</span>}
-            {visible.map((agent) => {
-                const blocked = blockedIds.has(agent.id) || agent.status === "needs-input";
+            {layout.overflow && (
+                <span
+                    className={`shelf-more ${layout.overflow.state}`}
+                    title={layout.overflow.hidden.map((thread) => thread.title).join("\n")}
+                >
+                    +{layout.overflow.count} more
+                </span>
+            )}
+            {layout.shown.map((thread) => {
+                const blocked = blockedIds.has(thread.id) || thread.state === "needs-you";
                 return (
-                    <div key={agent.id} className={`shelf-pill ${blocked ? "blocked" : ""}`}>
-                        <span
-                            className={`agent-dot small ${blocked ? "" : "spinning"}`}
-                            style={{ borderColor: agentColor(agent.hue, blocked), color: agentColor(agent.hue, blocked) }}
-                        />
-                        <span className="shelf-title">{agent.title}</span>
-                        <span className="shelf-step">{blocked ? "needs you" : `${agent.toolCalls}`}</span>
+                    <div
+                        key={thread.id}
+                        className={`shelf-pill ${blocked ? "blocked" : ""}`}
+                        style={{ ["--puck-hue" as string]: String(Math.round(thread.hue * 360)) }}
+                    >
+                        <span className={`shelf-puck ${blocked ? "blocked" : ""}`}>{thread.monogram}</span>
+                        <span className="shelf-title">{thread.title}</span>
+                        <span className="shelf-step">{blocked ? "needs you" : `${thread.agent.toolCalls}`}</span>
                     </div>
                 );
             })}
         </div>
     );
 }
+
+/** The shelf floats over the desktop, so it stays shorter than the rail does. */
+const SHELF_FACES = 3;
 
 export function useAutoScroll(dependency: unknown): React.RefObject<HTMLDivElement | null> {
     const ref = useRef<HTMLDivElement>(null);

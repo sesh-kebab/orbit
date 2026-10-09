@@ -1035,6 +1035,14 @@ export interface OrbitApi {
     /** Mark an outstanding decision as dealt with. */
     resolveOpenItem(id: string): Promise<void>;
     /**
+     * Answer one of Orbit's proposals about itself.
+     *
+     * Only the two answers a person can give from a panel. Shipping something
+     * is a claim about code that landed, and that belongs to the tool that can
+     * name the branch and the commit, not to a button.
+     */
+    answerProposal(id: string, status: "approved" | "declined"): Promise<void>;
+    /**
      * Record that he opened one of the artifacts on the board.
      *
      * Called alongside `openPath`, not instead of it: opening is the act, this
