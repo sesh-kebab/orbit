@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import type { DeckSection, DictationSupport, OrbitState } from "../../shared/types.js";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ChatMessage, DeckSection, DictationSupport, OrbitState } from "../../shared/types.js";
 import { DECK_SECTIONS, isDeckSection } from "../../shared/types.js";
 import { MOODS, headline } from "../mood.js";
 import type { Mood } from "../../shared/types.js";
@@ -9,6 +9,7 @@ import { Message, useAutoScroll } from "./Message.js";
 import { MissionControl } from "./MissionControl.js";
 import { onReaderOpen } from "../reader.js";
 import { NavRail } from "./NavRail.js";
+import { buildRoster, layoutRoster } from "../roster.js";
 
 const QUICK_ACTIONS = [
     "What's running?",
@@ -46,9 +47,68 @@ export function ChatPanel({ state, mood, onClose, onTypingChange }: Props): Reac
     );
     /** The document the viewer is showing. Set by a click on a file anywhere. */
     const [reading, setReading] = useState<string | undefined>(undefined);
+    /**
+     * The thread being worked in. Independent of `section`: looking at the log
+     * does not leave the thread, which is the whole reason the rail carries two
+     * marks rather than one.
+     */
+    const [activeThreadId, setActiveThreadId] = useState<string | undefined>(undefined);
+    /** How many faces the rail has room for. Measured by the rail itself. */
+    const [capacity, setCapacity] = useState(6);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const scrollRef = useAutoScroll(state.messages.length + (state.messages.at(-1)?.text.length ?? 0));
     const palette = MOODS[mood];
+
+    const roster = useMemo(() => buildRoster(state), [state.agents, state.board]);
+    const layout = useMemo(
+        () => layoutRoster(roster, capacity, activeThreadId),
+        [roster, capacity, activeThreadId],
+    );
+    const activeThread = roster.find((thread) => thread.id === activeThreadId);
+
+    // A thread that leaves the roster entirely, because the user cleared
+    // finished work, must not leave the panel stuck on a thread that no longer
+    // exists with no way back to Orbit.
+    useEffect(() => {
+        if (activeThreadId && !roster.some((thread) => thread.id === activeThreadId)) {
+            setActiveThreadId(undefined);
+        }
+    }, [roster, activeThreadId]);
+
+    const onMeasure = useCallback((next: number) => setCapacity(next), []);
+
+    /**
+     * The transcript, narrowed to one thread.
+     *
+     * Messages are not stored against a thread, and threading the store
+     * properly is a far larger piece of work than this redesign. What the store
+     * already carries is enough to do this honestly: a spawn names the agents
+     * it started, a completion names the agent that finished, and a request
+     * resolves to an agent through the pending-request table. So the slice is
+     * derived rather than invented, and it holds exactly the real messages
+     * belonging to that thread and nothing else.
+     *
+     * The seam this leaves is written in plain words in the header: the
+     * composer still talks to Orbit, because replying into an agent's own
+     * session needs multi-turn agents, which Orbit does not have.
+     */
+    const threadMessages = useMemo((): ChatMessage[] => {
+        if (!activeThreadId) return state.messages;
+        const agentOf = (requestId: string): string | undefined =>
+            state.requests.find((request) => request.id === requestId)?.agentId;
+        return state.messages.filter((message) => {
+            switch (message.kind.type) {
+                case "spawn":
+                    return message.kind.agentIds.includes(activeThreadId);
+                case "completion":
+                    return message.kind.agentId === activeThreadId;
+                case "request":
+                    return agentOf(message.kind.requestId) === activeThreadId;
+                default:
+                    return false;
+            }
+        });
+    }, [state.messages, state.requests, activeThreadId]);
 
     useEffect(() => {
         inputRef.current?.focus();
@@ -168,149 +228,193 @@ export function ChatPanel({ state, mood, onClose, onTypingChange }: Props): Reac
     return (
         <section className="panel" data-interactive>
             <ResizeGrip />
-            <header className="panel-head">
-                <span className="status-dot" style={{ background: palette.accent }} />
-                <div className="panel-title">
-                    <strong>Orbit</strong>
-                    <span className="muted">{headline(state)}</span>
-                </div>
-                <span className="mood-chip" style={{ color: palette.accent, background: `${palette.accent}22` }}>
-                    {palette.label}
-                </span>
-                <button
-                    className={`icon-button ${state.settings.yolo ? "danger" : ""}`}
-                    title={
-                        state.settings.yolo
-                            ? "Approving everything. Click to require approval again."
-                            : "Asking before commands and edits. Click to approve everything (YOLO)."
-                    }
-                    aria-label={state.settings.yolo ? "Require approval" : "Approve everything"}
-                    onClick={() => void window.orbit.setSettings({ yolo: !state.settings.yolo })}
-                >
-                    <Icon name={state.settings.yolo ? "bolt" : "shield"} />
-                </button>
-                <button
-                    className="icon-button"
-                    title="Restart Orbit to load new code, keeping this conversation"
-                    aria-label="Restart Orbit to load new code, keeping this conversation"
-                    onClick={() => void window.orbit.softRestart()}
-                >
-                    <Icon name="restart" />
-                </button>
-                <button
-                    className="icon-button"
-                    title="Hide the chat panel"
-                    aria-label="Hide the chat panel"
-                    onClick={onClose}
-                >
-                    <Icon name="close" />
-                </button>
-            </header>
 
             <NavRail
                 state={state}
                 section={section}
                 open={deckOpen}
-                orientation="bar"
+                layout={layout}
+                activeThreadId={activeThreadId}
                 onSelect={chooseSection}
+                onSelectThread={setActiveThreadId}
+                onMeasure={onMeasure}
             />
 
-            {deckOpen && <MissionControl state={state} section={section} reading={reading} />}
+            <div className="panel-main">
+                <header className="panel-head">
+                    {activeThread ? (
+                        <>
+                            {/*
+                             * The monogram follows the thread out of the rail:
+                             * the same two letters in the same hue, which is
+                             * what lets a 28px puck in a column and a mark
+                             * fourteen pixels high be recognisably one thing.
+                             */}
+                            <span
+                                className="head-puck"
+                                style={{ ["--puck-hue" as string]: String(Math.round(activeThread.hue * 360)) }}
+                            >
+                                {activeThread.monogram}
+                            </span>
+                            <div className="panel-title">
+                                <strong>{activeThread.title}</strong>
+                                {/*
+                                 * Said plainly rather than implied. The composer
+                                 * below is addressed to Orbit, and a header that
+                                 * let the user believe otherwise would be a much
+                                 * worse failure than an inelegant line of text.
+                                 */}
+                                <span className="muted">reading · the composer still talks to Orbit</span>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <span className="status-dot" style={{ background: palette.accent }} />
+                            <div className="panel-title">
+                                <strong>Orbit</strong>
+                                <span className="muted">{headline(state)}</span>
+                            </div>
+                            <span
+                                className="mood-chip"
+                                style={{ color: palette.accent, background: `${palette.accent}22` }}
+                            >
+                                {palette.label}
+                            </span>
+                        </>
+                    )}
+                    <button
+                        className={`icon-button ${state.settings.yolo ? "danger" : ""}`}
+                        title={
+                            state.settings.yolo
+                                ? "Approving everything. Click to require approval again."
+                                : "Asking before commands and edits. Click to approve everything (YOLO)."
+                        }
+                        aria-label={state.settings.yolo ? "Require approval" : "Approve everything"}
+                        onClick={() => void window.orbit.setSettings({ yolo: !state.settings.yolo })}
+                    >
+                        <Icon name={state.settings.yolo ? "bolt" : "shield"} />
+                    </button>
+                    <button
+                        className="icon-button"
+                        title="Restart Orbit to load new code, keeping this conversation"
+                        aria-label="Restart Orbit to load new code, keeping this conversation"
+                        onClick={() => void window.orbit.softRestart()}
+                    >
+                        <Icon name="restart" />
+                    </button>
+                    <button
+                        className="icon-button"
+                        title="Hide the chat panel"
+                        aria-label="Hide the chat panel"
+                        onClick={onClose}
+                    >
+                        <Icon name="close" />
+                    </button>
+                </header>
 
-            <div className="transcript" ref={scrollRef}>
-                {state.messages.map((message) => (
-                    <Message key={message.id} state={state} message={message} />
-                ))}
-                {state.orbitBusy && !state.messages.at(-1)?.streaming && (
-                    <div className="typing">
-                        <i style={{ background: palette.accent }} />
-                        <i style={{ background: palette.accent }} />
-                        <i style={{ background: palette.accent }} />
+                {deckOpen && <MissionControl state={state} section={section} reading={reading} />}
+
+                <div className="transcript" ref={scrollRef}>
+                    {threadMessages.map((message) => (
+                        <Message key={message.id} state={state} message={message} />
+                    ))}
+                    {activeThread && threadMessages.length === 0 && (
+                        <p className="thread-empty muted small">
+                            Nothing from {activeThread.title} has reached the transcript yet. What it
+                            is doing right now is in the work section.
+                        </p>
+                    )}
+                    {!activeThread && state.orbitBusy && !state.messages.at(-1)?.streaming && (
+                        <div className="typing">
+                            <i style={{ background: palette.accent }} />
+                            <i style={{ background: palette.accent }} />
+                            <i style={{ background: palette.accent }} />
+                        </div>
+                    )}
+                </div>
+
+                {!activeThread && state.messages.length < 3 && !voice.busy && voice.state === "idle" && (
+                    <div className="quick">
+                        {QUICK_ACTIONS.map((action) => (
+                            <button
+                                key={action}
+                                className="chip chip-neutral"
+                                title={`Ask Orbit: ${action}`}
+                                onClick={() => void window.orbit.send(action)}
+                            >
+                                {action}
+                            </button>
+                        ))}
                     </div>
                 )}
-            </div>
 
-            {state.messages.length < 3 && !voice.busy && voice.state === "idle" && (
-                <div className="quick">
-                    {QUICK_ACTIONS.map((action) => (
-                        <button
-                            key={action}
-                            className="chip chip-neutral"
-                            title={`Ask Orbit: ${action}`}
-                            onClick={() => void window.orbit.send(action)}
-                        >
-                            {action}
-                        </button>
-                    ))}
-                </div>
-            )}
+                {(voice.busy || voice.state === "transcribing" || voice.state === "error") && (
+                    <VoiceStatus voice={voice} />
+                )}
 
-            {(voice.busy || voice.state === "transcribing" || voice.state === "error") && (
-                <VoiceStatus voice={voice} />
-            )}
-
-            <form
-                className="composer"
-                onSubmit={(event) => {
-                    event.preventDefault();
-                    submit();
-                }}
-            >
-                <textarea
-                    ref={inputRef}
-                    rows={1}
-                    value={draft}
-                    readOnly={voice.busy}
-                    placeholder={
-                        ready ? "Ask Orbit to do something…" : "waiting for Copilot…"
-                    }
-                    onChange={(event) => setDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                        if (event.key === "Enter" && !event.shiftKey) {
-                            event.preventDefault();
-                            submit();
-                        }
+                <form
+                    className="composer"
+                    onSubmit={(event) => {
+                        event.preventDefault();
+                        submit();
                     }}
-                />
-                <button
-                    type="button"
-                    className={`icon-button mic ${voice.busy ? "on" : ""}`}
-                    aria-label={voice.busy ? "Stop dictating and send" : "Dictate a message"}
-                    disabled={!ready || voice.support?.available === false}
-                    title={
-                        voice.support?.available === false
-                            ? (voice.support.reason ?? "Dictation isn't available on this Mac.")
-                            : voice.busy
-                              ? "Stop and send (⌘⇧M) · Esc to discard"
-                              : "Talk to Orbit (⌘⇧M)"
-                    }
-                    onClick={() => voice.toggle()}
                 >
-                    <Icon name={voice.busy ? "stop" : "mic"} />
-                </button>
-                {state.orbitBusy ? (
+                    <textarea
+                        ref={inputRef}
+                        rows={1}
+                        value={draft}
+                        readOnly={voice.busy}
+                        placeholder={
+                            ready ? "Ask Orbit to do something…" : "waiting for Copilot…"
+                        }
+                        onChange={(event) => setDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                            if (event.key === "Enter" && !event.shiftKey) {
+                                event.preventDefault();
+                                submit();
+                            }
+                        }}
+                    />
                     <button
                         type="button"
-                        className="send stop"
-                        title="Stop what Orbit is doing"
-                        aria-label="Stop what Orbit is doing"
-                        onClick={() => void window.orbit.abort()}
+                        className={`icon-button mic ${voice.busy ? "on" : ""}`}
+                        aria-label={voice.busy ? "Stop dictating and send" : "Dictate a message"}
+                        disabled={!ready || voice.support?.available === false}
+                        title={
+                            voice.support?.available === false
+                                ? (voice.support.reason ?? "Dictation isn't available on this Mac.")
+                                : voice.busy
+                                  ? "Stop and send (⌘⇧M) · Esc to discard"
+                                  : "Talk to Orbit (⌘⇧M)"
+                        }
+                        onClick={() => voice.toggle()}
                     >
-                        <Icon name="stop" />
+                        <Icon name={voice.busy ? "stop" : "mic"} />
                     </button>
-                ) : (
-                    <button
-                        type="submit"
-                        className="send"
-                        style={{ background: palette.accent }}
-                        disabled={!draft.trim() || voice.busy}
-                        title="Send (Enter) · Shift+Enter for a new line"
-                        aria-label="Send message"
-                    >
-                        <Icon name="send" />
-                    </button>
-                )}
-            </form>
+                    {state.orbitBusy ? (
+                        <button
+                            type="button"
+                            className="send stop"
+                            title="Stop what Orbit is doing"
+                            aria-label="Stop what Orbit is doing"
+                            onClick={() => void window.orbit.abort()}
+                        >
+                            <Icon name="stop" />
+                        </button>
+                    ) : (
+                        <button
+                            type="submit"
+                            className="send"
+                            style={{ background: palette.accent }}
+                            disabled={!draft.trim() || voice.busy}
+                            title="Send (Enter) · Shift+Enter for a new line"
+                            aria-label="Send message"
+                        >
+                            <Icon name="send" />
+                        </button>
+                    )}
+                </form>
+            </div>
         </section>
     );
 }

@@ -313,6 +313,7 @@ export function baseState(patch: Partial<OrbitState> = {}): OrbitState {
         memories: MEMORIES,
         leave: [],
         openItems: [],
+        proposals: [],
         history: [
             { id: "h1", at: EPOCH - 6_000, kind: "agent.done", title: "Release notes for 0.4", detail: "38 commits summarised" },
             { id: "h2", at: EPOCH - 132_000, kind: "agent.start", title: "Flaky checkout spec" },

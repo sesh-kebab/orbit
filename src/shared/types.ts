@@ -21,6 +21,37 @@ export type Mood =
     | "celebrating"
     | "broken";
 
+export type OutboundSurface = "mail" | "chat" | "channel" | "invite";
+
+/**
+ * What a send is about to reach, carried whole to the renderer.
+ *
+ * It used to be flattened into one comma-joined string before it crossed the
+ * bridge, which meant the card could only ever draw it as a paragraph and the
+ * twelfth name could be clipped out of a box with a height cap on it. A list
+ * of people has to arrive as a list of people, because the card's only job is
+ * to let a human read every one of them before they are mailed.
+ */
+export interface OutboundSend {
+    surface: OutboundSurface;
+    /**
+     * The people this reaches, by name or address, as far as the arguments
+     * reveal. Empty is not "nobody": see `audienceKnown`.
+     */
+    recipients: string[];
+    /**
+     * False when the arguments name a destination but not the people in it, as
+     * a Teams chat id does. The audience is then unverifiable from the request
+     * alone, which is the exact condition that caused the 16 Sep mis-send, so it
+     * is stated on the card rather than passed over in silence.
+     */
+    audienceKnown: boolean;
+    /** The chat, channel or mailbox path being posted into. */
+    target: string;
+    /** The opening of what is about to be sent. */
+    preview?: string;
+}
+
 /** A decision the agent cannot make on its own. */
 export interface PendingRequest {
     id: string;
@@ -34,6 +65,12 @@ export interface PendingRequest {
     options: Array<{ id: string; label: string; tone: "primary" | "neutral" | "danger" }>;
     allowFreeform: boolean;
     createdAt: number;
+    /**
+     * Set when answering this puts words in front of someone who is not Seshi.
+     * The card draws the audience from here rather than from `subject`, so no
+     * recipient can be lost to a string join or to a scroll box.
+     */
+    outbound?: OutboundSend;
 }
 
 /** One line in an agent's activity feed. */
@@ -69,6 +106,16 @@ export interface AgentView {
     pendingRequestId?: string;
     /** Set when this agent is a run of a standing watcher. */
     scheduleId?: string;
+    /**
+     * This agent was alive when Orbit itself went down, and its Copilot session
+     * went with the process. Nothing failed: the recovery is to start it again.
+     *
+     * A flag rather than a seventh `AgentStatus` because the status union is
+     * switched on in a dozen places that all mean "how did the work end", and
+     * the answer here is "it did not, we did". Carried alongside `cancelled`,
+     * which is the nearest honest terminal status.
+     */
+    severed?: boolean;
     inputTokens: number;
     outputTokens: number;
 }
@@ -935,6 +982,17 @@ export interface OrbitState {
     memories: MemoryNote[];
     /** Decisions still waiting on the user. Resolved ones are dropped. */
     openItems: OpenItem[];
+    /**
+     * What Orbit is proposing about itself.
+     *
+     * These used to live only in main, on the reasoning that the renderer had
+     * nothing to draw them with. It does now: they are a second group inside
+     * the memory section, under the things Orbit remembers about him. They are
+     * not a section of their own, because a rail section is a promise that
+     * something is worth looking at daily and a proposal is worth looking at
+     * about once a fortnight.
+     */
+    proposals: Proposal[];
     history: HistoryEntry[];
     usage: UsageTotals;
     /**

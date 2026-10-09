@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { AgentView, ChatMessage, OrbitState, PathInfo, PendingRequest, ReplyRef } from "../../shared/types.js";
+import type { AgentView, ChatMessage, OrbitState, OutboundSend, PathInfo, PendingRequest, ReplyRef } from "../../shared/types.js";
 import { agentColor, elapsedLabel } from "../mood.js";
 import { Icon } from "./Icon.js";
 import { parseMarkdown, isPlainText, type Align, type Block, type Inline } from "../markdown.js";
@@ -572,15 +572,17 @@ function RequestCard({
         void window.orbit.answerRequest(request.id, optionId, text);
     };
 
+    const send = request.outbound;
+
     return (
-        <div className="card card-ask">
+        <div className={`card card-ask ${send ? "card-outbound" : ""}`}>
             <div className="card-head">
                 <span className="card-title">{agent?.title ?? "an agent"}</span>
                 <span className="ask-flag">needs you</span>
             </div>
             <p className="ask-question">{request.title}</p>
-            {request.subject && <code className="ask-subject">{request.subject}</code>}
-            {request.detail && <p className="muted small">{request.detail}</p>}
+            {send ? <Audience send={send} /> : request.subject && <code className="ask-subject">{request.subject}</code>}
+            {request.detail && !send && <p className="muted small">{request.detail}</p>}
             <div className="ask-options">
                 {request.options.map((option) => (
                     <button
@@ -608,6 +610,66 @@ function RequestCard({
                     />
                 </form>
             )}
+        </div>
+    );
+}
+
+/**
+ * Who a send is about to reach, in full.
+ *
+ * Every recipient gets its own line and its own number, and there is no height
+ * cap on the list. The two rules are deliberate and they cost a scroll on a
+ * long send, which is the one place in the panel where a scroll is the right
+ * answer: the approve control sits underneath the last name, so it cannot be
+ * reached without the twelfth person having passed under the eye.
+ *
+ * The numbers are there because "12 people" in the headline is a claim and a
+ * numbered list is a thing you can count. They are the cheapest possible way to
+ * let somebody check the claim against the list.
+ */
+function Audience({ send }: { send: OutboundSend }): React.JSX.Element {
+    const count = send.recipients.length;
+    const width = String(count).length;
+
+    return (
+        <div className="audience">
+            <div className="audience-head">
+                <span className="audience-count">
+                    {send.audienceKnown
+                        ? `${count} recipient${count === 1 ? "" : "s"}`
+                        : "recipients unverified"}
+                </span>
+                <code className="audience-target" title={send.target}>
+                    {send.target}
+                </code>
+            </div>
+
+            {count > 0 ? (
+                <ol className="audience-list">
+                    {send.recipients.map((person, index) => (
+                        <li key={`${person}-${index}`}>
+                            <span className="audience-index">
+                                {String(index + 1).padStart(Math.max(2, width), "0")}
+                            </span>
+                            <span className="audience-name">{person}</span>
+                        </li>
+                    ))}
+                </ol>
+            ) : (
+                <p className="audience-blind">
+                    Nothing in this request says who is in it. Check the membership before approving:
+                    an extra person in the thread is not recoverable once sent.
+                </p>
+            )}
+
+            {count > 0 && !send.audienceKnown && (
+                <p className="audience-blind">
+                    These are the names the request happens to carry. It names a destination rather
+                    than its membership, so there may be people in it that this list does not show.
+                </p>
+            )}
+
+            {send.preview && <p className="audience-preview">“{send.preview}”</p>}
         </div>
     );
 }
